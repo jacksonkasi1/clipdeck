@@ -3,6 +3,7 @@
 //! Clipdeck only writes beneath a marked storage root. Clipboard source paths
 //! are read-only inputs: they are never moved, renamed, or deleted.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::Component;
@@ -23,35 +24,52 @@ pub fn paths_overlap(left: &Path, right: &Path) -> io::Result<bool> {
 }
 
 fn canonical_or_normalized(path: &Path) -> io::Result<PathBuf> {
-    let resolved = match fs::canonicalize(path) {
-        Ok(canonical) => canonical,
-        Err(_) => {
-            let absolute = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                std::env::current_dir()?.join(path)
-            };
-            let mut normalized = PathBuf::new();
-            for component in absolute.components() {
-                match component {
-                    Component::CurDir => {}
-                    Component::ParentDir => {
-                        if !normalized.pop() {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidInput,
-                                "path escapes its filesystem root",
-                            ));
-                        }
-                    }
-                    Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                        normalized.push(component.as_os_str());
-                    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "path escapes its filesystem root",
+                    ));
                 }
             }
-            normalized
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
         }
-    };
-    Ok(strip_windows_verbatim_prefix(&resolved))
+    }
+
+    // A destination may not exist yet. Canonicalize its nearest existing
+    // ancestor so short names, junctions, and verbatim prefixes are resolved
+    // consistently on both sides of an overlap comparison.
+    let mut candidate = normalized.as_path();
+    let mut suffix: Vec<OsString> = Vec::new();
+    loop {
+        if let Ok(mut resolved) = fs::canonicalize(candidate) {
+            for component in suffix.iter().rev() {
+                resolved.push(component);
+            }
+            return Ok(strip_windows_verbatim_prefix(&resolved));
+        }
+        let Some(name) = candidate.file_name() else {
+            break;
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = candidate.parent() else {
+            break;
+        };
+        candidate = parent;
+    }
+
+    Ok(strip_windows_verbatim_prefix(&normalized))
 }
 
 #[cfg(windows)]
