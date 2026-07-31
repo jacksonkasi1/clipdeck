@@ -2,19 +2,30 @@
 // Field names are camelCase on the wire; serde's `rename_all = "camelCase"`
 // is configured globally in `error.rs` via the `Serialize` implementation.
 
-export type ItemKind = 'Text' | 'Link' | 'Email' | 'Color' | 'Image' | 'Files';
+export type ItemKind = 'text' | 'link' | 'email' | 'color' | 'image' | 'files';
 
-export type PasteFlavor = 'Original' | 'PlainText';
+export type PasteFlavor = 'original' | 'plainText';
 
-export type Backdrop = 'Acrylic' | 'Mica' | 'Solid';
+export type Backdrop = 'acrylic' | 'mica' | 'solid';
 
-export type ThemeMode = 'System' | 'Light' | 'Dark';
+export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface ImageMeta {
   path: string;
   thumbPath: string;
   width: number;
   height: number;
+}
+
+export type StoredFileStatus = 'pending' | 'ready' | 'skipped' | 'failed';
+
+export interface StoredFile {
+  originalPath: string;
+  storedPath: string | null;
+  sizeBytes: number;
+  isDirectory: boolean;
+  status: StoredFileStatus;
+  message: string | null;
 }
 
 export interface SourceApp {
@@ -32,6 +43,7 @@ export interface ClipItem {
   hasRtf: boolean;
   image: ImageMeta | null;
   files: string[];
+  fileAssets: StoredFile[];
   sizeBytes: number;
   source: SourceApp | null;
   favorite: boolean;
@@ -42,7 +54,7 @@ export interface ClipItem {
 
 export interface ListQuery {
   search?: string | null;
-  kinds?: ItemKind[] | null;
+  kinds?: ItemKind[];
   favoritesOnly?: boolean;
   limit?: number;
   offset?: number;
@@ -60,14 +72,25 @@ export interface Counts {
   total: number;
   favorites: number;
   pinned: number;
+  text: number;
+  images: number;
+  files: number;
+  links: number;
+  colors: number;
+  emails: number;
+  storageBytes: number;
 }
 
 export interface Settings {
+  settingsVersion: number;
   hotkey: string;
   maxItems: number;
   retentionDays: number;
   captureImages: boolean;
   captureFiles: boolean;
+  storeFileSnapshots: boolean;
+  maxSnapshotSizeMb: number;
+  storagePath: string | null;
   ignoredApps: string[];
   backdrop: Backdrop;
   theme: ThemeMode;

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Clipdeck",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "app.clipdeck.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -17,36 +17,34 @@
         "label": "main",
         "title": "Clipdeck",
         "url": "index.html",
-        "width": 760,
-        "height": 480,
-        "minWidth": 520,
-        "minHeight": 360,
+        "width": 1120,
+        "height": 720,
+        "minWidth": 420,
+        "minHeight": 600,
         "center": true,
         "visible": false,
         "focus": false,
         "resizable": true,
-        "decorations": false,
-        "transparent": true,
+        "decorations": true,
+        "transparent": false,
         "shadow": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visibleOnAllWorkspaces": true,
-        "dragDropEnabled": false
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "visibleOnAllWorkspaces": false,
+        "dragDropEnabled": true
       }
     ],
     "security": {
-      "csp": null,
+      "csp": {
+        "default-src": "'self' customprotocol: asset:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost blob: data:",
+        "style-src": "'self' 'unsafe-inline'"
+      },
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/**"]
       }
-    },
-    "trayIcon": {
-      "id": "clipdeck-tray",
-      "iconPath": "icons/tray.png",
-      "iconAsTemplate": false,
-      "tooltip": "Clipdeck — clipboard history",
-      "menuOnLeftClick": false
     }
   },
   "bundle": {

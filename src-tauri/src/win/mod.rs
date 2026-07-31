@@ -8,8 +8,11 @@
 //! * [`source`]     — attributes a clipboard change to the application that made it.
 //! * [`paste`]      — restores focus to the previous app and synthesises Ctrl+V.
 
+#[cfg(not(test))]
 pub mod appearance;
+#[cfg(not(test))]
 pub mod backdrop;
+#[cfg(not(test))]
 pub mod paste;
 pub mod source;
 

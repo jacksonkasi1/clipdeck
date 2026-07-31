@@ -1,190 +1,392 @@
-import { useEffect, useState } from 'react';
+// ** import types
+import type { ClipItem } from '../lib/types';
 
+// ** import lib
+import { useEffect, useState } from 'react';
+import {
+  CheckCircle2,
+  CircleMinus,
+  ClipboardCopy,
+  Copy,
+  ExternalLink,
+  File,
+  FileImage,
+  Folder,
+  FolderOpen,
+  Link2,
+  LoaderCircle,
+  Mail,
+  PanelBottomClose,
+  PanelBottomOpen,
+  Pencil,
+  Save,
+  Star,
+  Trash2,
+  TriangleAlert,
+  X,
+} from 'lucide-react';
+
+import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 import { api, fileSrc } from '../lib/tauri';
-import type { ClipItem } from '../lib/types';
+import { getShortcutLabel } from '../lib/platform';
 
 export function PreviewPane() {
   const selectedId = useStore((s) => s.selectedId);
   const items = useStore((s) => s.items);
-  const item = items.find((i) => i.id === selectedId) ?? null;
+  const editItem = useStore((s) => s.editItem);
+  const item = items.find((entry) => entry.id === selectedId) ?? null;
+  const [editing, setEditing] = useState(false);
 
-  if (!item) {
-    return <PreviewEmpty />;
-  }
+  useEffect(() => setEditing(false), [selectedId]);
+  useEffect(() => {
+    const beginEditing = () => {
+      if (item && !['image', 'files'].includes(item.kind)) setEditing(true);
+    };
+    window.addEventListener('clipdeck:edit-selected', beginEditing);
+    return () => window.removeEventListener('clipdeck:edit-selected', beginEditing);
+  }, [item]);
+
   return (
     <section className="preview-pane" aria-label="Preview">
-      <PreviewToolbar item={item} />
-      <PreviewBody item={item} />
+      <PreviewToolbar item={item} onEdit={() => setEditing(true)} />
+      {item ? (
+        editing ? (
+          <EditItem
+            item={item}
+            onCancel={() => setEditing(false)}
+            onSave={async (content) => {
+              await editItem(item.id, content);
+              setEditing(false);
+            }}
+          />
+        ) : (
+          <PreviewBody item={item} onEdit={() => setEditing(true)} />
+        )
+      ) : (
+        <PreviewEmpty />
+      )}
     </section>
   );
 }
 
-function PreviewToolbar({ item }: { item: ClipItem }) {
-  const setShowPreview = useStore((s) => s.setShowPreview);
-  const showPreview = useStore((s) => s.showPreview);
+function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () => void }) {
+  const showDetails = useStore((s) => s.showDetails);
+  const setShowDetails = useStore((s) => s.setShowDetails);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   const deleteItem = useStore((s) => s.deleteItem);
+  const editable = item && ['text', 'link', 'email', 'color'].includes(item.kind);
 
   return (
-    <div className="preview-toolbar" role="toolbar" aria-label="Preview actions">
-      <IconButton label="Copy" onClick={() => api.copyToClipboard(item.id, 'Original')}>
-        <svg viewBox="0 0 16 16" aria-hidden focusable="false">
-          <path
-            d="M5 2a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H5Zm0 1.5h6a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5H5a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5Z"
-            fill="currentColor"
-          />
-        </svg>
-      </IconButton>
-      <IconButton label="Paste" onClick={() => api.pasteActive(item.id, 'Original')}>
-        <svg viewBox="0 0 16 16" aria-hidden focusable="false">
-          <path
-            d="M5 2h6v2h2v10H3V4h2V2Zm1.5 1v.5h3V3h-3Zm-2 2v8h7V5h-7Z"
-            fill="currentColor"
-          />
-        </svg>
-      </IconButton>
-      <IconButton
-        label={item.favorite ? 'Unfavorite' : 'Favorite'}
-        onClick={() => toggleFavorite(item.id)}
-      >
-        <svg viewBox="0 0 16 16" aria-hidden focusable="false">
-          <path
-            d="M8 1.5l1.94 4.36 4.78.42-3.61 3.16 1.06 4.6L8 11.7 3.83 14.04l1.06-4.6L1.28 6.28l4.78-.42L8 1.5Z"
-            fill={item.favorite ? 'currentColor' : 'none'}
-            stroke="currentColor"
-            strokeWidth="1.2"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </IconButton>
-      <IconButton label="Delete" onClick={() => deleteItem(item.id)}>
-        <svg viewBox="0 0 16 16" aria-hidden focusable="false">
-          <path
-            d="M5.5 2.5V3h5v-.5A1.5 1.5 0 0 0 9 1H7a1.5 1.5 0 0 0-1.5 1.5ZM3 4h10v.5H3V4Zm1.5 1.5h7l-.5 8a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 5 13.5l-.5-8Z"
-            fill="currentColor"
-          />
-        </svg>
-      </IconButton>
+    <div className="preview-toolbar" role="toolbar" aria-label="Item actions">
+      <div className="toolbar-group">
+        <IconButton
+          label={`Copy to clipboard (${getShortcutLabel('copy')})`}
+          disabled={!item}
+          onClick={() => item && void api.copyToClipboard(item.id, 'original')}
+        >
+          <Copy size={18} aria-hidden />
+        </IconButton>
+        <IconButton
+          label={`Paste to active application (${getShortcutLabel('paste')})`}
+          disabled={!item}
+          onClick={() => item && void api.pasteActive(item.id, 'original')}
+        >
+          <ClipboardCopy size={18} aria-hidden />
+        </IconButton>
+        {editable && (
+          <IconButton label={`Edit item (${getShortcutLabel('edit')})`} onClick={onEdit}>
+            <Pencil size={18} aria-hidden />
+          </IconButton>
+        )}
+      </div>
       <div className="toolbar-spacer" />
-      <IconButton
-        label={showPreview ? 'Hide details' : 'Show details'}
-        onClick={() => setShowPreview(!showPreview)}
-      >
-        <svg viewBox="0 0 16 16" aria-hidden focusable="false">
-          <path
-            d="M3 5h10v6H3V5Zm1 1v4h8V6H4Z"
-            fill="currentColor"
-          />
-        </svg>
-      </IconButton>
-    </div>
-  );
-}
-
-function IconButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className="icon-button"
-      aria-label={label}
-      title={label}
-      onClick={() => onClick()}
-    >
-      {children}
-    </button>
-  );
-}
-
-function PreviewBody({ item }: { item: ClipItem }) {
-  switch (item.kind) {
-    case 'Image':
-      return item.image ? (
-        <div className="preview-image-wrap">
-          <img className="preview-image" src={fileSrc(item.image.path)} alt="" />
-        </div>
-      ) : (
-        <PreviewEmpty message="Image not available" />
-      );
-    case 'Color':
-      return <ColorPreview hex={item.preview.trim()} />;
-    case 'Files':
-      return (
-        <ul className="file-list">
-          {item.files.map((f) => (
-            <li key={f}>{f}</li>
-          ))}
-        </ul>
-      );
-    default:
-      return <TextPreview item={item} />;
-  }
-}
-
-function TextPreview({ item }: { item: ClipItem }) {
-  const [rich, setRich] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    if (item.hasHtml) {
-      api
-        .flavorsFor(item.id)
-        .then((f) => {
-          if (!cancelled && f.html) setRich(f.html);
-        })
-        .catch(() => undefined);
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [item.id, item.hasHtml]);
-
-  if (rich) {
-    return (
-      <div
-        className="preview-text preview-html"
-        // The content originates from the user's own clipboard.
-        // eslint-disable-next-line react/no-danger
-        dangerouslySetInnerHTML={{ __html: rich }}
-      />
-    );
-  }
-  return <pre className="preview-text">{item.content}</pre>;
-}
-
-function ColorPreview({ hex }: { hex: string }) {
-  return (
-    <div className="color-preview">
-      <div className="color-preview-swatch" style={{ background: hex }} />
-      <div className="color-preview-meta">
-        <div className="color-preview-hex">{hex}</div>
-        <div className="color-preview-rgb">{hexToRgbString(hex)}</div>
+      <div className="toolbar-group">
+        <IconButton
+          label={item?.favorite ? 'Remove from favorites' : 'Add to favorites'}
+          active={item?.favorite ?? false}
+          disabled={!item}
+          onClick={() => item && void toggleFavorite(item.id)}
+        >
+          <Star size={19} fill={item?.favorite ? 'currentColor' : 'none'} aria-hidden />
+        </IconButton>
+        <IconButton
+          label={showDetails ? 'Hide details' : 'Show details'}
+          active={item ? showDetails : false}
+          disabled={!item}
+          onClick={() => setShowDetails(!showDetails)}
+        >
+          {showDetails ? (
+            <PanelBottomClose size={19} aria-hidden />
+          ) : (
+            <PanelBottomOpen size={19} aria-hidden />
+          )}
+        </IconButton>
+        <IconButton
+          label="Delete item"
+          tone="danger"
+          disabled={!item}
+          onClick={() => item && void deleteItem(item.id)}
+        >
+          <Trash2 size={18} aria-hidden />
+        </IconButton>
       </div>
     </div>
   );
 }
 
-function PreviewEmpty({ message = 'Select an entry to preview' }: { message?: string } = {}) {
+function PreviewBody({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
+  switch (item.kind) {
+    case 'image':
+      return <ImagePreview item={item} />;
+    case 'color':
+      return <ColorPreview value={item.content || item.preview.trim()} onEdit={onEdit} />;
+    case 'files':
+      return <FilePreview item={item} />;
+    case 'link':
+      return <LinkPreview item={item} onEdit={onEdit} />;
+    case 'email':
+      return <EmailPreview item={item} onEdit={onEdit} />;
+    default:
+      return <TextPreview item={item} onEdit={onEdit} />;
+  }
+}
+
+function TextPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
+  const codeLike = /(^|\n)\s*(const|let|fn|use|import|SELECT|class|function)\b|[{};]\s*$/m.test(
+    item.content,
+  );
   return (
-    <div className="preview-empty">
-      <p>{message}</p>
+    <button
+      type="button"
+      className={`preview-scroll preview-text-wrap preview-edit-trigger ${codeLike ? 'is-code' : ''}`}
+      onClick={onEdit}
+      title="Edit item"
+    >
+      <pre className="preview-text">{item.content || item.preview}</pre>
+    </button>
+  );
+}
+
+function ImagePreview({ item }: { item: ClipItem }) {
+  if (!item.image) {
+    return <PreviewFailure title={item.preview} message="The image preview is unavailable." />;
+  }
+  return (
+    <div className="preview-scroll preview-image-wrap">
+      <div className="image-canvas">
+        <img className="preview-image" src={fileSrc(item.image.path)} alt={item.preview} />
+      </div>
+      <div className="preview-caption">
+        <FileImage size={16} aria-hidden />
+        <span>{item.image.width} × {item.image.height} pixels</span>
+      </div>
     </div>
   );
 }
 
-function hexToRgbString(hex: string): string {
-  const body = hex.startsWith('#') ? hex.slice(1) : hex;
-  if (body.length !== 6 && body.length !== 3) return '';
-  const expand = (s: string) => (s.length === 1 ? s + s : s);
-  const r = parseInt(expand(body.slice(0, body.length / 3)), 16);
-  const g = parseInt(expand(body.slice(body.length / 3, (body.length * 2) / 3)), 16);
-  const b = parseInt(expand(body.slice((body.length * 2) / 3)), 16);
-  return `rgb(${r}, ${g}, ${b})`;
+function FilePreview({ item }: { item: ClipItem }) {
+  const assets = item.fileAssets.length
+    ? item.fileAssets
+    : item.files.map((path) => ({
+        originalPath: path,
+        storedPath: null,
+        sizeBytes: 0,
+        isDirectory: false,
+        status: 'skipped' as const,
+        message: 'Original path only',
+      }));
+  return (
+    <div className="preview-scroll file-preview">
+      {assets.map((asset) => (
+        <article className="file-card" key={asset.originalPath}>
+          <span className="file-card-icon">
+            {asset.isDirectory
+              ? <Folder size={28} strokeWidth={1.5} aria-hidden />
+              : <File size={28} strokeWidth={1.5} aria-hidden />}
+          </span>
+          <div className="file-card-copy">
+            <strong>{baseName(asset.originalPath)}</strong>
+            <span>{asset.storedPath ?? asset.originalPath}</span>
+            <small className={`snapshot-status is-${asset.status}`}>
+              <SnapshotStatusIcon status={asset.status} />
+              {snapshotLabel(asset.status, asset.message)}
+            </small>
+          </div>
+          <IconButton
+            label="Show in File Explorer"
+            onClick={() => void api.revealItem(asset.storedPath ?? asset.originalPath)}
+          >
+            <FolderOpen size={17} aria-hidden />
+          </IconButton>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
+  const url = item.content || item.preview;
+  const domain = safeDomain(url);
+  return (
+    <div className="preview-scroll link-preview">
+      <article className="link-card">
+        <div className="link-hero">
+          <span className="link-mark"><Link2 size={34} aria-hidden /></span>
+          <span>{domain}</span>
+        </div>
+        <button type="button" className="link-card-copy preview-edit-trigger" onClick={onEdit}>
+          <strong>{domain || 'Web link'}</strong>
+          <span>{url}</span>
+        </button>
+      </article>
+      <button type="button" className="secondary-button" onClick={() => void api.openUrl(url)}>
+        <ExternalLink size={16} aria-hidden /> Open in browser
+      </button>
+    </div>
+  );
+}
+
+function EmailPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
+  const address = item.content || item.preview;
+  return (
+    <div className="preview-scroll email-preview">
+      <span className="email-mark"><Mail size={34} strokeWidth={1.5} aria-hidden /></span>
+      <button type="button" className="editable-preview" onClick={onEdit} title="Edit email address">
+        {address}
+      </button>
+      <span>Email address</span>
+    </div>
+  );
+}
+
+function ColorPreview({ value, onEdit }: { value: string; onEdit: () => void }) {
+  const rgb = hexToRgb(value);
+  return (
+    <div className="preview-scroll color-preview">
+      <div
+        className="color-preview-swatch"
+        style={{ backgroundColor: value }}
+        role="img"
+        aria-label={`Color preview ${value}`}
+      />
+      <button type="button" className="editable-preview" onClick={onEdit} title="Edit color value">
+        {value}
+      </button>
+      <span>{rgb}</span>
+    </div>
+  );
+}
+
+function EditItem({
+  item,
+  onSave,
+  onCancel,
+}: {
+  item: ClipItem;
+  onSave: (content: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(item.content || item.preview);
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <form
+      className="preview-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!value.trim() || saving) return;
+        setSaving(true);
+        void onSave(value).finally(() => setSaving(false));
+      }}
+    >
+      <header>
+        <div>
+          <strong>Edit clipboard item</strong>
+          <span>Changes are saved locally and become the new copy value.</span>
+        </div>
+        <IconButton label="Cancel editing" onClick={onCancel}>
+          <X size={18} aria-hidden />
+        </IconButton>
+      </header>
+      <textarea
+        autoFocus
+        aria-label="Clipboard item content"
+        spellCheck
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          }
+        }}
+      />
+      <footer>
+        <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
+        <button type="submit" className="primary-button" disabled={!value.trim() || saving}>
+          <Save size={16} aria-hidden /> {saving ? 'Saving…' : 'Save item'}
+        </button>
+      </footer>
+    </form>
+  );
+}
+
+function SnapshotStatusIcon({ status }: { status: 'pending' | 'ready' | 'skipped' | 'failed' }) {
+  if (status === 'pending') return <LoaderCircle size={13} className="spin" aria-hidden />;
+  if (status === 'ready') return <CheckCircle2 size={13} aria-hidden />;
+  if (status === 'skipped') return <CircleMinus size={13} aria-hidden />;
+  return <TriangleAlert size={13} aria-hidden />;
+}
+
+function snapshotLabel(status: 'pending' | 'ready' | 'skipped' | 'failed', message: string | null) {
+  if (status === 'pending') return 'Saving a managed snapshot…';
+  if (status === 'ready') return 'Saved in Clipdeck storage';
+  return message ?? (status === 'failed' ? 'Snapshot failed' : 'Snapshot skipped');
+}
+
+function PreviewEmpty() {
+  return (
+    <div className="preview-empty">
+      <span className="preview-empty-icon"><ClipboardCopy size={26} aria-hidden /></span>
+      <strong>Select an item to preview</strong>
+      <span>Use ↑ and ↓ to move through your clipboard history.</span>
+    </div>
+  );
+}
+
+function PreviewFailure({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="preview-empty preview-failure">
+      <span className="preview-empty-icon"><FileImage size={26} aria-hidden /></span>
+      <strong>{title}</strong>
+      <span>{message}</span>
+    </div>
+  );
+}
+
+function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function safeDomain(value: string): string {
+  try {
+    return new URL(value).hostname.replace(/^www\./, '');
+  } catch {
+    return value;
+  }
+}
+
+function hexToRgb(value: string): string {
+  const match = /^#([\da-f]{3}|[\da-f]{6})$/i.exec(value);
+  if (!match?.[1]) return value;
+  const body = match[1].length === 3
+    ? match[1].split('').map((part) => part + part).join('')
+    : match[1];
+  const number = Number.parseInt(body, 16);
+  return `rgb(${number >> 16}, ${(number >> 8) & 255}, ${number & 255})`;
 }

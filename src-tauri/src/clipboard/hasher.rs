@@ -7,6 +7,7 @@
 //! through timing.
 
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 use sha2::{Digest, Sha256};
 
@@ -34,6 +35,16 @@ pub fn hash_files(paths: &[PathBuf]) -> String {
     sorted.sort();
     for path in &sorted {
         hasher.update(path.as_os_str().as_encoded_bytes());
+        if let Ok(metadata) = std::fs::metadata(path) {
+            hasher.update(metadata.len().to_le_bytes());
+            hasher.update([metadata.is_dir() as u8]);
+            if let Ok(modified) = metadata.modified().and_then(|time| {
+                time.duration_since(UNIX_EPOCH)
+                    .map_err(std::io::Error::other)
+            }) {
+                hasher.update(modified.as_nanos().to_le_bytes());
+            }
+        }
         hasher.update([0u8]);
     }
     let mut out = format!("{:x}", hasher.finalize());

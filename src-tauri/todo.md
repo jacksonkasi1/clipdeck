@@ -12,7 +12,7 @@ GNU toolchain).
 - Rust test suite compiles without warnings for `x86_64-pc-windows-gnu`.
 - Tauri release build completes successfully.
 - `clipdeck.exe` remains running in a launch smoke test.
-- NSIS produces `Clipdeck_0.1.0_x64-setup.exe`.
+- NSIS produces `Clipdeck_0.1.1_x64-setup.exe`.
 
 ## Already done
 1. Heavy-installs redirected to `D:\Program`:

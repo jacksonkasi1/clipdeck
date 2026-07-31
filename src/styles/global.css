@@ -1,87 +1,96 @@
-/* Global resets and base styles for the Clipdeck popup window.
- *
- * The body is transparent because the Acrylic/Mica effect is drawn behind
- * the webview by `window-vibrancy`. The popup must therefore paint its own
- * background; we use a near-opaque tint so text remains readable while
- * keeping enough see-through for the system blur to show through.
- */
-
 @import './tokens.css';
-@import 'tailwindcss';
 @import './app.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
 html,
 body,
 #root {
+  width: 100%;
   height: 100%;
   margin: 0;
-  padding: 0;
   overflow: hidden;
+}
+
+html {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  background: var(--window);
+  color: var(--text);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
-  font-family: var(--font-text);
-  font-size: 14px;
-  line-height: 20px;
-  color: var(--color-text);
-  background: transparent;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  background: var(--window);
   user-select: none;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+button:not(:disabled),
+[role='option'] {
   cursor: default;
 }
 
-/* The popup chrome is a single rounded surface. The OS gives us rounded
- * window corners via DWM, so we keep the CSS radius at 0 and rely on the
- * native geometry. */
-.surface {
-  background: color-mix(in srgb, var(--color-bg) 86%, transparent);
-  backdrop-filter: blur(30px) saturate(150%);
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
-  height: 100%;
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  grid-template-rows: 1fr auto;
-  grid-template-areas:
-    'left right'
-    'footer footer';
-  border-radius: var(--radius-overlay);
-  border: 1px solid var(--color-stroke-subtle);
-  box-shadow: var(--shadow-flyout-current);
-  overflow: hidden;
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
 }
 
-[data-theme='dark'] .surface {
-  background: color-mix(in srgb, var(--color-bg-dark) 78%, transparent);
+::selection {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  background-clip: padding-box;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
-}
-
-/* Selection styling — accent colour instead of the browser default. */
-::selection {
-  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
-  color: var(--color-text);
-}
-
-/* Scrollbars: thin Fluent-style. */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-text) 18%, transparent);
-  border-radius: var(--radius-pill);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--color-text) 30%, transparent);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
 }

@@ -1,0 +1,147 @@
+name: Windows Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  WINDOWS_TARGET: x86_64-pc-windows-msvc
+
+jobs:
+  build:
+    name: Build and verify Windows x64 release
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.collect.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+          targets: ${{ env.WINDOWS_TARGET }}
+
+      - name: Install frontend dependencies
+        run: npm ci --no-audit
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Lint Rust
+        run: >-
+          cargo clippy
+          --manifest-path src-tauri/Cargo.toml
+          --target ${{ env.WINDOWS_TARGET }}
+          --locked
+          --all-targets
+          --
+          -D warnings
+
+      - name: Run Rust tests on Windows MSVC
+        run: >-
+          cargo test
+          --manifest-path src-tauri/Cargo.toml
+          --target ${{ env.WINDOWS_TARGET }}
+          --locked
+          --all-targets
+          --
+          --test-threads=1
+
+      - name: Build NSIS installer
+        run: >-
+          npx tauri build
+          --ci
+          --target ${{ env.WINDOWS_TARGET }}
+          --bundles nsis
+
+      - name: Smoke-test packaged executable
+        shell: pwsh
+        run: >-
+          ./scripts/smoke-test-windows.ps1
+          -Executable "src-tauri/target/${{ env.WINDOWS_TARGET }}/release/clipdeck.exe"
+
+      - name: Collect and verify release artifacts
+        id: collect
+        shell: pwsh
+        env:
+          RELEASE_REF_TYPE: ${{ github.ref_type }}
+          RELEASE_REF_NAME: ${{ github.ref_name }}
+        run: |
+          $expectedVersion = if ($env:RELEASE_REF_TYPE -eq "tag") {
+            $env:RELEASE_REF_NAME -replace '^v', ''
+          } else {
+            ""
+          }
+
+          ./scripts/collect-windows-artifacts.ps1 `
+            -TargetTriple "${{ env.WINDOWS_TARGET }}" `
+            -OutputDirectory "artifacts/windows-x64" `
+            -ExpectedVersion $expectedVersion
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
+          path: artifacts/windows-x64/
+          if-no-files-found: error
+          retention-days: 90
+
+  publish:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: clipdeck-windows-x64-${{ needs.build.outputs.version }}
+          path: release-assets
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Clipdeck $RELEASE_VERSION" \
+              --repo "$GITHUB_REPOSITORY"
+          fi

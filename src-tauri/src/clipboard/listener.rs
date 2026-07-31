@@ -15,16 +15,20 @@
 //! only windows do not receive broadcast messages, and `WM_CLIPBOARDUPDATE` is
 //! exactly that.
 
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
+use std::time::Duration;
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::DataExchange::AddClipboardFormatListener;
+use windows::Win32::System::DataExchange::{
+    AddClipboardFormatListener, RemoveClipboardFormatListener,
+};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassExW, SetWindowPos,
-    TranslateMessage, HWND_TOP, MSG, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE, WINDOW_STYLE,
-    WM_CLIPBOARDUPDATE, WM_DESTROY, WNDCLASSEXW,
+    TranslateMessage, GWLP_USERDATA, HWND_TOP, MSG, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_CLIPBOARDUPDATE, WM_DESTROY, WM_NCDESTROY, WNDCLASSEXW,
 };
 
 use crate::models::{ItemKind, SourceApp};
@@ -46,8 +50,8 @@ pub struct ClipEvent {
     pub kind: ItemKind,
     pub preview: String,
     pub content: String,
-    pub has_html: bool,
-    pub has_rtf: bool,
+    pub html: Option<String>,
+    pub rtf: Option<String>,
     /// PNG bytes captured during the clipboard notification. Keeping these on
     /// the event avoids reopening the clipboard after another app has changed it.
     pub image_bytes: Option<Vec<u8>>,
@@ -60,21 +64,48 @@ pub struct ClipEvent {
 /// Starts the listener thread and returns once the hidden window has been
 /// registered with the shell.
 pub fn start_listener(sink: Arc<dyn CaptureSink>) -> std::io::Result<()> {
+    const EVENT_QUEUE_CAPACITY: usize = 32;
+    let (event_tx, event_rx) = mpsc::sync_channel::<ClipEvent>(EVENT_QUEUE_CAPACITY);
+    std::thread::Builder::new()
+        .name("clipboard-persist".into())
+        .spawn(move || {
+            while let Ok(event) = event_rx.recv() {
+                sink.handle(event);
+            }
+        })?;
+
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<std::result::Result<(), String>>(1);
     std::thread::Builder::new()
         .name("clipboard-listener".into())
         .spawn(move || {
-            if let Err(err) = run(sink) {
+            let failure_tx = ready_tx.clone();
+            if let Err(err) = run(event_tx, ready_tx) {
+                let _ = failure_tx.try_send(Err(err.to_string()));
                 log::error!("clipboard listener terminated: {err}");
             }
-        })
-        .map(|_| ())
+        })?;
+
+    match ready_rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(message)) => Err(std::io::Error::other(message)),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "clipboard listener did not become ready within 3 seconds",
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::other(
+            "clipboard listener exited before reporting readiness",
+        )),
+    }
 }
 
 /// Result of `run` so we can log a specific failure rather than panic on the
 /// listener thread (which would tear the process down silently).
 type BoxResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
-fn run(sink: Arc<dyn CaptureSink>) -> BoxResult<()> {
+fn run(
+    event_tx: SyncSender<ClipEvent>,
+    ready_tx: SyncSender<std::result::Result<(), String>>,
+) -> BoxResult<()> {
     unsafe {
         let class_name = to_wide("ClipdeckListener");
         let instance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
@@ -131,7 +162,10 @@ fn run(sink: Arc<dyn CaptureSink>) -> BoxResult<()> {
         // Stash the sink on the window so the wndproc can recover it via
         // GetWindowLongPtrW. We only have one listener, so a thread-local
         // would also work; using the HWND keeps the API symmetrical.
-        set_user_data(hwnd, ListenerData { sink: sink.clone() });
+        set_user_data(hwnd, ListenerData { event_tx });
+        ready_tx
+            .send(Ok(()))
+            .map_err(|_| "listener readiness receiver disconnected")?;
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -145,13 +179,7 @@ fn run(sink: Arc<dyn CaptureSink>) -> BoxResult<()> {
 
 #[derive(Clone)]
 struct ListenerData {
-    sink: Arc<dyn CaptureSink>,
-}
-
-impl Drop for ListenerData {
-    fn drop(&mut self) {
-        log::debug!("clipboard listener window destroyed");
-    }
+    event_tx: SyncSender<ClipEvent>,
 }
 
 /// Window procedure. `WM_CLIPBOARDUPDATE` is the only custom message we
@@ -165,14 +193,26 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if let Some(data) = get_user_data(hwnd) {
                 let foreground = source::current_foreground();
                 if let Some(event) = capture(foreground) {
-                    data.sink.handle(event);
+                    if data.event_tx.try_send(event).is_err() {
+                        log::warn!("clipboard persistence queue is full; capture was skipped");
+                    }
                 }
             }
             LRESULT(0)
         }
         WM_DESTROY => {
+            let _ = RemoveClipboardFormatListener(hwnd);
             windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
             LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            use windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
+
+            let raw = SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) as *mut ListenerData;
+            if !raw.is_null() {
+                drop(Box::from_raw(raw));
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -185,20 +225,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// should be silently dropped.
 fn capture(foreground_hint: isize) -> Option<ClipEvent> {
     let formats = Formats::register();
-    if formats::is_sensitive(&formats) {
-        return None;
-    }
+    let snapshot = formats::read_snapshot(&formats)?;
+    let text = snapshot.text;
+    let html = snapshot.html;
+    let rtf = snapshot.rtf;
+    let files = snapshot.files;
+    let image = snapshot.image;
 
-    let text = formats::read_text();
-    let html = formats::read_html();
-    let rtf = formats::read_rtf();
-    let files = formats::read_files();
-    let image = formats::read_image();
-
-    let (kind, content, content_hash) = if let Some(bytes) = image.as_deref() {
-        let hash = hasher::hash_image(bytes);
-        (ItemKind::Image, String::new(), hash)
-    } else if !files.is_empty() {
+    // CF_HDROP is authoritative when present. Explorer and design tools may
+    // also publish a decorative bitmap for a file selection; treating that as
+    // the payload would lose the actual paths.
+    let (kind, content, content_hash) = if !files.is_empty() {
         let display = files
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
@@ -206,6 +243,9 @@ fn capture(foreground_hint: isize) -> Option<ClipEvent> {
             .join("\n");
         let hash = hasher::hash_files(&files);
         (ItemKind::Files, display, hash)
+    } else if let Some(bytes) = image.as_deref() {
+        let hash = hasher::hash_image(bytes);
+        (ItemKind::Image, String::new(), hash)
     } else {
         let text = text?;
         let hash = hasher::hash_text(&text);
@@ -250,16 +290,17 @@ fn capture(foreground_hint: isize) -> Option<ClipEvent> {
         .iter()
         .map(|p| p.to_string_lossy().into_owned())
         .collect();
+    let size_bytes = content.len().min(i64::MAX as usize) as i64;
 
     Some(ClipEvent {
         kind,
         preview,
         content,
-        has_html: html.is_some(),
-        has_rtf: rtf.is_some(),
-        image_bytes: image,
+        html,
+        rtf,
+        image_bytes: (kind == ItemKind::Image).then_some(image).flatten(),
         files: file_strings,
-        size_bytes: 0,
+        size_bytes,
         source,
         content_hash,
     })
@@ -287,7 +328,7 @@ fn set_user_data(hwnd: HWND, data: ListenerData) {
 
 fn get_user_data(hwnd: HWND) -> Option<ListenerData> {
     unsafe {
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWLP_USERDATA};
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW;
         let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ListenerData;
         if raw.is_null() {
             None
