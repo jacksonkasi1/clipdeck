@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  normalizeShortcutCode,
   normalizeShortcutKey,
   shortcutFromKeyEvent,
   shortcutRecorderKeyAction,
@@ -32,6 +33,27 @@ describe('global shortcut recorder', () => {
     expect(normalizeShortcutKey('AudioVolumeUp')).toBeNull();
     expect(normalizeShortcutKey('F13')).toBeNull();
     expect(normalizeShortcutKey('F12')).toBe('F12');
+  });
+
+  it('prefers physical codes for shifted and non-Latin keyboard layouts', () => {
+    expect(normalizeShortcutCode('Digit1')).toBe('1');
+    expect(normalizeShortcutCode('Equal')).toBe('Equals');
+    expect(shortcutFromKeyEvent({
+      key: '!',
+      code: 'Digit1',
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: true,
+      metaKey: false,
+    }, 'Win')).toBe('Ctrl+Shift+1');
+    expect(shortcutFromKeyEvent({
+      key: 'м',
+      code: 'KeyV',
+      ctrlKey: true,
+      altKey: false,
+      shiftKey: false,
+      metaKey: false,
+    }, 'Win')).toBe('Ctrl+V');
   });
 
   it('lets Tab and Shift+Tab leave the recorder while Escape ends recording', () => {

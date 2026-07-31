@@ -66,7 +66,9 @@ pub fn apply_all(app: &AppHandle, settings: &Settings) -> SystemAppearance {
 #[cfg(not(test))]
 pub fn handle_system_theme_changed(window: &Window, theme: Theme) {
     let app = window.app_handle();
-    let state: tauri::State<'_, AppState> = app.state();
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
     let settings = state.settings.read().clone();
     if settings.theme != ThemeMode::System {
         return;

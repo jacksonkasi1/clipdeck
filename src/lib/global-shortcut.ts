@@ -49,6 +49,7 @@ const KEY_ALIASES: Record<string, string> = {
 
 export interface ShortcutKeyEvent {
   key: string;
+  code?: string;
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
@@ -71,7 +72,7 @@ export function shortcutFromKeyEvent(
   if (['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return null;
   if (!event.ctrlKey && !event.altKey && !event.metaKey) return null;
 
-  const key = normalizeShortcutKey(event.key);
+  const key = normalizeShortcutCode(event.code) ?? normalizeShortcutKey(event.key);
   if (!key) return null;
 
   const parts: string[] = [];
@@ -80,6 +81,16 @@ export function shortcutFromKeyEvent(
   if (event.shiftKey) parts.push('Shift');
   if (event.metaKey) parts.push(metaLabel);
   return [...parts, key].join('+');
+}
+
+/** Maps physical browser key codes to the names accepted by the native parser. */
+export function normalizeShortcutCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  if (/^F(?:[1-9]|1[0-2])$/.test(code)) return code;
+  if (code === 'Equal') return 'Equals';
+  return NAMED_KEYS.has(code) ? code : null;
 }
 
 export function normalizeShortcutKey(key: string): string | null {
