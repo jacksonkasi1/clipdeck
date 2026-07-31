@@ -73,7 +73,6 @@ Branch: `feat/clipdeck-windows-overhaul`
 - [x] Update README architecture, keyboard reference, build steps,
   limitations, and macOS/Linux follow-ups.
 - [x] Build the final size-gated NSIS installer and smoke-test the packaged executable.
-- [ ] Commit, push, pass GitHub CI, and merge the pull request into `main`.
 
 ## Acceptance gates
 

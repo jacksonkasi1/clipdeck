@@ -19,7 +19,9 @@ pub mod clipboard;
 pub mod commands;
 pub mod db;
 pub mod error;
+pub mod hotkey;
 pub mod models;
+pub mod native_appearance;
 pub mod storage;
 #[cfg(not(test))]
 pub mod tray;
@@ -33,7 +35,9 @@ mod win;
 pub struct AppState {
     pub db: Arc<db::Db>,
     pub storage_root: Arc<parking_lot::RwLock<PathBuf>>,
+    pub storage_operation: Arc<parking_lot::RwLock<()>>,
     pub settings: Arc<parking_lot::RwLock<models::Settings>>,
+    pub active_hotkey: parking_lot::Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>,
     pub foreground: parking_lot::Mutex<isize>,
 }
 
@@ -75,17 +79,24 @@ pub fn run() {
             commands::set_always_on_top,
             commands::set_preview_visible,
             commands::quit_app,
+            native_appearance::sync_native_appearance,
         ])
         .setup(|app| {
             bootstrap(app)?;
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                // Hiding rather than exiting matches the Win+V flyout behaviour
-                // and avoids the slow second-launch Tauri performs.
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    // Hiding rather than exiting matches the Win+V flyout behaviour
+                    // and avoids the slow second-launch Tauri performs.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                WindowEvent::ThemeChanged(theme) => {
+                    native_appearance::handle_system_theme_changed(window, *theme);
+                }
+                _ => {}
             }
         })
         .build(tauri::generate_context!())
@@ -127,7 +138,9 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let state = AppState {
         db: Arc::clone(&db),
         storage_root: Arc::new(parking_lot::RwLock::new(storage_path)),
+        storage_operation: Arc::new(parking_lot::RwLock::new(())),
         settings: Arc::clone(&settings),
+        active_hotkey: parking_lot::Mutex::new(None),
         foreground: parking_lot::Mutex::new(0),
     };
     app.manage(state);
@@ -137,14 +150,17 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
         let app_state: tauri::State<AppState> = app.state();
         let settings = app_state.settings.read().clone();
-        let dark = crate::win::appearance::read().dark;
-        let backdrop = crate::win::backdrop::apply(&window, settings.backdrop, dark);
+        let system = crate::win::appearance::read();
+        let backdrop = native_appearance::apply_window(&window, &settings, &system);
         log::info!("applied backdrop: {backdrop:?}");
     }
 
     // Tray icon and global shortcut are installed even on autostart.
     tray::install(app)?;
-    commands::install_hotkey(app)?;
+    commands::install_hotkey(app);
+    if let Err(error) = commands::enforce_history_policy_on_startup(app) {
+        log::error!("startup history cleanup failed: {error}");
+    }
     commands::install_clipboard_listener(app)?;
 
     Ok(())

@@ -1003,6 +1003,37 @@ mod tests {
     }
 
     #[test]
+    fn prune_reports_assets_from_rows_removed_by_the_policy() {
+        let db = Db::open_in_memory().unwrap();
+        let make_image = |hash: &str, name: &str| NewItem {
+            kind: ItemKind::Image,
+            image: Some(ImageMeta {
+                path: format!("C:/managed/images/{name}.png"),
+                thumb_path: format!("C:/managed/thumbs/{name}.png"),
+                width: 1,
+                height: 1,
+            }),
+            content_hash: hash.into(),
+            ..Default::default()
+        };
+        let older = db.upsert(&make_image("older-image", "older")).unwrap().id();
+        let newer = db.upsert(&make_image("newer-image", "newer")).unwrap().id();
+        db.conn
+            .lock()
+            .execute(
+                "UPDATE items SET last_copied_at = CASE id WHEN ?1 THEN 1 WHEN ?2 THEN 2 END",
+                params![older, newer],
+            )
+            .unwrap();
+
+        let orphans = db.prune(1, 0).unwrap();
+
+        assert_eq!(db.counts().unwrap().total, 1);
+        assert_eq!(orphans.len(), 2);
+        assert!(orphans.iter().any(|path| path.ends_with("older.png")));
+    }
+
+    #[test]
     fn delete_reports_orphaned_assets() {
         let db = Db::open_in_memory().unwrap();
         let item = NewItem {

@@ -214,11 +214,14 @@ export async function bootStore() {
     on<Settings>('settings-updated', (settings) => {
       useStore.setState({ settings, showPreview: settings.showPreview });
     }),
+    on<SystemAppearance>('appearance-changed', (appearance) => {
+      useStore.getState().applyAppearance(appearance);
+    }),
   ]);
 
   const syncAppearance = async () => {
     try {
-      const appearance = await api.appearance();
+      const appearance = await api.syncNativeAppearance();
       useStore.getState().applyAppearance(appearance);
     } catch (error) {
       console.error('Failed to read system appearance', error);

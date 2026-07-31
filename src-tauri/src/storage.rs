@@ -301,22 +301,69 @@ pub fn copy_managed_storage(old_root: &Path, new_root: &Path) -> Result<()> {
     if old_root == new_root {
         return Ok(());
     }
-    prepare_root(new_root)?;
+    validate_empty_migration_target(new_root)?;
+    let copy_result = (|| {
+        prepare_root(new_root)?;
+        // Validate every destination before copying any source folder. This
+        // keeps rollback safe for an existing, empty marked location.
+        for folder in ["images", "thumbs", "files"] {
+            let destination = new_root.join(folder);
+            if fs::read_dir(&destination)?.next().transpose()?.is_some() {
+                return Err(Error::Other(format!(
+                    "new storage folder already contains Clipdeck {folder} data"
+                )));
+            }
+        }
+        for folder in ["images", "thumbs", "files"] {
+            let source = old_root.join(folder);
+            if !source.exists() {
+                continue;
+            }
+            let destination = new_root.join(folder);
+            copy_directory(&source, &destination, 0)?;
+            if measured_size(&source, 0)? != measured_size(&destination, 0)? {
+                return Err(Error::Other(format!(
+                    "storage verification failed for {folder}"
+                )));
+            }
+        }
+        Ok(())
+    })();
+    if copy_result.is_err() && new_root.join(MARKER_FILE).is_file() {
+        let _ = remove_managed_directories(new_root);
+    }
+    copy_result
+}
+
+/// Ensures a migration destination contains no pre-existing managed assets.
+/// Once this succeeds, a failed copy can safely remove the three managed
+/// subdirectories because they were empty (or absent) before migration began.
+pub fn validate_empty_migration_target(root: &Path) -> Result<()> {
+    if root.exists() && !root.is_dir() {
+        return Err(Error::Other("storage location must be a directory".into()));
+    }
+
+    let marker = root.join(MARKER_FILE);
+    if root.exists() && !marker.is_file() {
+        let reserved = ["images", "thumbs", "files"]
+            .iter()
+            .any(|folder| root.join(folder).exists());
+        if reserved {
+            return Err(Error::Other(
+                "storage folder contains reserved Clipdeck directories".into(),
+            ));
+        }
+        return Ok(());
+    }
+
     for folder in ["images", "thumbs", "files"] {
-        let source = old_root.join(folder);
-        if !source.exists() {
+        let path = root.join(folder);
+        if !path.exists() {
             continue;
         }
-        let destination = new_root.join(folder);
-        if fs::read_dir(&destination)?.next().transpose()?.is_some() {
+        if !path.is_dir() || fs::read_dir(&path)?.next().transpose()?.is_some() {
             return Err(Error::Other(format!(
                 "new storage folder already contains Clipdeck {folder} data"
-            )));
-        }
-        copy_directory(&source, &destination, 0)?;
-        if measured_size(&source, 0)? != measured_size(&destination, 0)? {
-            return Err(Error::Other(format!(
-                "storage verification failed for {folder}"
             )));
         }
     }
@@ -427,5 +474,34 @@ mod tests {
         let base = PathBuf::from(r"C:\Users\Person\Clipdeck");
         let nested = PathBuf::from(r"c:\users\person\Clipdeck\files\..\images");
         assert!(paths_overlap(&base, &nested).unwrap());
+    }
+
+    #[test]
+    fn migration_target_validation_rejects_existing_managed_data() {
+        let root = test_root("migration-target");
+        prepare_root(&root).unwrap();
+        fs::write(root.join("images").join("existing.png"), b"existing").unwrap();
+
+        assert!(validate_empty_migration_target(&root).is_err());
+        assert!(root.join("images").join("existing.png").is_file());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_storage_copy_cleans_the_new_managed_directories() {
+        let old_root = test_root("migration-broken-source");
+        let new_root = test_root("migration-rollback-target");
+        fs::create_dir_all(&old_root).unwrap();
+        fs::write(old_root.join("images"), b"not a directory").unwrap();
+
+        assert!(copy_managed_storage(&old_root, &new_root).is_err());
+        assert!(new_root.join(MARKER_FILE).is_file());
+        for folder in ["images", "thumbs", "files"] {
+            assert!(!new_root.join(folder).exists());
+        }
+
+        fs::remove_dir_all(old_root).unwrap();
+        fs::remove_dir_all(new_root).unwrap();
     }
 }

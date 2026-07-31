@@ -4,6 +4,7 @@ import type { Backdrop, ItemKind, Settings as SettingsType, ThemeMode } from './
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
+import { shortcutFromKeyEvent } from './lib/global-shortcut';
 
 // ** import lib
 import { useEffect, useState } from 'react';
@@ -419,15 +420,11 @@ function ShortcutRecorder({ value, onChange }: { value: string; onChange: (value
           event.currentTarget.blur();
           return;
         }
-        if (['Control', 'Shift', 'Alt', 'Meta'].includes(event.key)) return;
-        const parts: string[] = [];
-        if (event.ctrlKey) parts.push('Ctrl');
-        if (event.altKey) parts.push('Alt');
-        if (event.shiftKey) parts.push('Shift');
-        if (event.metaKey) parts.push(getPlatform() === 'macos' ? 'Super' : 'Win');
-        if (parts.length === 0) return;
-        const key = normalizeShortcutKey(event.key);
-        onChange([...parts, key].join('+'));
+        const shortcut = shortcutFromKeyEvent(
+          event,
+          getPlatform() === 'macos' ? 'Super' : 'Win',
+        );
+        if (shortcut) onChange(shortcut);
       }}
     >
       <span className="shortcut-keys">
@@ -435,15 +432,4 @@ function ShortcutRecorder({ value, onChange }: { value: string; onChange: (value
       </span>
     </button>
   );
-}
-
-function normalizeShortcutKey(key: string): string {
-  const aliases: Record<string, string> = {
-    ' ': 'Space',
-    ',': 'Comma',
-    '.': 'Period',
-    '/': 'Slash',
-    '\\': 'Backslash',
-  };
-  return aliases[key] ?? (key.length === 1 ? key.toUpperCase() : key);
 }

@@ -13,7 +13,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
+  # A branch push and the matching pull-request synchronize event must share
+  # one group, otherwise the same expensive Windows release build runs twice.
+  group: windows-ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 env:

@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc};
 
 use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
@@ -152,8 +152,9 @@ pub async fn edit_item(
 
 #[tauri::command]
 pub async fn delete_item(state: tauri::State<'_, AppState>, id: i64) -> Result<()> {
+    let _storage_guard = state.storage_operation.read();
     let orphans = state.db.delete(id)?;
-    cleanup_assets(&state, orphans);
+    cleanup_asset_paths(&state.storage_root.read(), orphans);
     Ok(())
 }
 
@@ -162,8 +163,9 @@ pub async fn clear_history(
     state: tauri::State<'_, AppState>,
     include_favorites: bool,
 ) -> Result<()> {
+    let _storage_guard = state.storage_operation.read();
     let orphans = state.db.clear(include_favorites)?;
-    cleanup_assets(&state, orphans);
+    cleanup_asset_paths(&state.storage_root.read(), orphans);
     Ok(())
 }
 
@@ -173,8 +175,9 @@ pub async fn clear_category(
     kind: ItemKind,
     include_favorites: bool,
 ) -> Result<()> {
+    let _storage_guard = state.storage_operation.read();
     let orphans = state.db.clear_kind(kind, include_favorites)?;
-    cleanup_assets(&state, orphans);
+    cleanup_asset_paths(&state.storage_root.read(), orphans);
     Ok(())
 }
 
@@ -196,13 +199,26 @@ pub async fn save_settings(
 ) -> Result<Settings> {
     // Storage changes use the verified migration command; never accept a raw
     // path mutation through the general settings form.
-    settings.storage_path = state.settings.read().storage_path.clone();
-    state.db.save_settings(&settings)?;
+    let previous = state.settings.read().clone();
+    settings.storage_path = previous.storage_path.clone();
+    let hotkey_changed = settings.hotkey != previous.hotkey;
+    if hotkey_changed {
+        switch_hotkey(&app, &settings.hotkey)?;
+    }
+    if let Err(error) = state.db.save_settings(&settings) {
+        if hotkey_changed {
+            if let Err(rollback_error) = switch_hotkey(&app, &previous.hotkey) {
+                log::error!("could not restore the previous hotkey: {rollback_error}");
+            }
+        }
+        return Err(error);
+    }
     {
         let mut current = state.settings.write();
         *current = settings.clone();
     }
     apply_runtime_settings(&app, &settings)?;
+    enforce_history_policy(&state)?;
     let _ = app.emit("settings-updated", &settings);
     Ok(settings)
 }
@@ -213,6 +229,7 @@ pub async fn change_storage_location(
     state: tauri::State<'_, AppState>,
     path: String,
 ) -> Result<Settings> {
+    let _storage_guard = state.storage_operation.write();
     let target = PathBuf::from(path.trim());
     if !target.is_absolute() {
         return Err(Error::Other(
@@ -229,13 +246,23 @@ pub async fn change_storage_location(
         ));
     }
 
+    // Reject occupied targets before the asset scope is granted or any files
+    // are copied. A successful validation makes later rollback safe.
+    crate::storage::validate_empty_migration_target(&target)?;
+
     app.asset_protocol_scope()
         .allow_directory(&target, true)
         .map_err(|error| Error::Other(error.to_string()))?;
-    crate::storage::copy_managed_storage(&old_root, &target)?;
+    if let Err(error) = crate::storage::copy_managed_storage(&old_root, &target) {
+        revoke_storage_target_scope(&app, &target);
+        return Err(error);
+    }
     let mut next = state.settings.read().clone();
     next.storage_path = Some(target.to_string_lossy().into_owned());
-    state.db.migrate_storage(&old_root, &target, &next)?;
+    if let Err(error) = state.db.migrate_storage(&old_root, &target, &next) {
+        rollback_storage_target(&app, &target);
+        return Err(error);
+    }
     *state.storage_root.write() = target;
     *state.settings.write() = next.clone();
     if let Err(error) = app.asset_protocol_scope().forbid_directory(&old_root, true) {
@@ -251,12 +278,7 @@ pub async fn change_storage_location(
 
 #[tauri::command]
 pub async fn prune_now(state: tauri::State<'_, AppState>) -> Result<()> {
-    let settings = state.settings.read().clone();
-    let orphans = state
-        .db
-        .prune(settings.max_items, settings.retention_days)?;
-    cleanup_assets(&state, orphans);
-    Ok(())
+    enforce_history_policy(&state)
 }
 
 #[tauri::command]
@@ -323,14 +345,6 @@ pub async fn quit_app(app: AppHandle) -> Result<()> {
 
 // ---- helpers -------------------------------------------------------------
 
-/// Removes only Clipdeck-managed assets that the DB no longer references.
-/// Clipboard source paths are never returned by `collect_assets`, and this
-/// second boundary check prevents accidental deletion outside managed storage.
-fn cleanup_assets(state: &tauri::State<'_, AppState>, orphans: Vec<String>) {
-    let storage_root = state.storage_root.read().clone();
-    cleanup_asset_paths(&storage_root, orphans);
-}
-
 fn cleanup_asset_paths(storage_root: &std::path::Path, orphans: Vec<String>) {
     for path in orphans {
         let p = PathBuf::from(&path);
@@ -340,132 +354,64 @@ fn cleanup_asset_paths(storage_root: &std::path::Path, orphans: Vec<String>) {
     }
 }
 
-/// Registers the global shortcut and keeps it in sync with the current
-/// settings. Re-registration is required when the user changes the binding.
-pub fn install_hotkey(app: &App) -> Result<()> {
-    let state: tauri::State<AppState> = app.state();
+fn rollback_storage_target(app: &AppHandle, target: &std::path::Path) {
+    if let Err(error) = crate::storage::remove_managed_directories(target) {
+        log::warn!("failed storage target cleanup was incomplete: {error}");
+    }
+    revoke_storage_target_scope(app, target);
+}
+
+fn revoke_storage_target_scope(app: &AppHandle, target: &std::path::Path) {
+    if let Err(error) = app.asset_protocol_scope().forbid_directory(target, true) {
+        log::warn!("failed storage target scope could not be removed: {error}");
+    }
+}
+
+fn enforce_history_policy(state: &tauri::State<'_, AppState>) -> Result<()> {
+    let _storage_guard = state.storage_operation.read();
     let settings = state.settings.read().clone();
-    register_shortcut(app, &settings.hotkey)?;
+    let storage_root = state.storage_root.read().clone();
+    let orphans = state
+        .db
+        .prune(settings.max_items, settings.retention_days)?;
+    cleanup_asset_paths(&storage_root, orphans);
     Ok(())
 }
 
-fn register_shortcut(app: &App, combo: &str) -> Result<()> {
-    let manager = app.global_shortcut();
-    manager.unregister_all().ok();
+/// Applies retention immediately during startup, before clipboard capture can
+/// enqueue background asset work.
+pub fn enforce_history_policy_on_startup(app: &App) -> Result<()> {
+    let state: tauri::State<AppState> = app.state();
+    enforce_history_policy(&state)
+}
 
-    let parts: Vec<&str> = combo.split('+').map(str::trim).collect();
-    let mut modifiers = Modifiers::empty();
-    let mut code: Option<Code> = None;
-    for part in parts {
-        match part.to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
-            "shift" => modifiers |= Modifiers::SHIFT,
-            "alt" => modifiers |= Modifiers::ALT,
-            "super" | "win" | "meta" => modifiers |= Modifiers::META,
-            key => {
-                code = Some(
-                    key_name_to_code(key)
-                        .ok_or_else(|| Error::Other(format!("unknown hotkey token: {key}")))?,
-                )
+/// Installs the saved global shortcut without making startup depend on it. A
+/// stale, unsupported, or OS-conflicting binding is replaced with the first
+/// available safe fallback and persisted so the UI stays truthful.
+pub fn install_hotkey(app: &App) {
+    let state: tauri::State<AppState> = app.state();
+    let saved = state.settings.read().hotkey.clone();
+    if switch_hotkey(app.handle(), &saved).is_ok() {
+        return;
+    }
+
+    log::warn!("saved global shortcut is unavailable; trying safe fallbacks");
+    for fallback in ["Ctrl+Shift+V", "Ctrl+Alt+V", "Ctrl+Shift+C"] {
+        if fallback == saved {
+            continue;
+        }
+        if switch_hotkey(app.handle(), fallback).is_ok() {
+            let mut settings = state.settings.write().clone();
+            settings.hotkey = fallback.to_string();
+            if let Err(error) = state.db.save_settings(&settings) {
+                log::error!("could not persist fallback global shortcut: {error}");
             }
+            *state.settings.write() = settings.clone();
+            let _ = app.emit("settings-updated", &settings);
+            return;
         }
     }
-    let code = code.ok_or_else(|| Error::Other("hotkey must include a non-modifier key".into()))?;
-    let shortcut = Shortcut::new(Some(modifiers), code);
-
-    let app_handle = app.handle().clone();
-    manager
-        .on_shortcut(shortcut, move |_app, _scut, event| {
-            if matches!(event.state(), ShortcutState::Pressed) {
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    crate::window::toggle(&window);
-                }
-            }
-        })
-        .map_err(|e| Error::Other(format!("hotkey registration failed: {e}")))?;
-    Ok(())
-}
-
-fn key_name_to_code(name: &str) -> Option<Code> {
-    use Code::*;
-    let normalized = name.to_ascii_uppercase();
-    Some(match normalized.as_str() {
-        "A" => KeyA,
-        "B" => KeyB,
-        "C" => KeyC,
-        "D" => KeyD,
-        "E" => KeyE,
-        "F" => KeyF,
-        "G" => KeyG,
-        "H" => KeyH,
-        "I" => KeyI,
-        "J" => KeyJ,
-        "K" => KeyK,
-        "L" => KeyL,
-        "M" => KeyM,
-        "N" => KeyN,
-        "O" => KeyO,
-        "P" => KeyP,
-        "Q" => KeyQ,
-        "R" => KeyR,
-        "S" => KeyS,
-        "T" => KeyT,
-        "U" => KeyU,
-        "V" => KeyV,
-        "W" => KeyW,
-        "X" => KeyX,
-        "Y" => KeyY,
-        "Z" => KeyZ,
-        "0" => Digit0,
-        "1" => Digit1,
-        "2" => Digit2,
-        "3" => Digit3,
-        "4" => Digit4,
-        "5" => Digit5,
-        "6" => Digit6,
-        "7" => Digit7,
-        "8" => Digit8,
-        "9" => Digit9,
-        "F1" => F1,
-        "F2" => F2,
-        "F3" => F3,
-        "F4" => F4,
-        "F5" => F5,
-        "F6" => F6,
-        "F7" => F7,
-        "F8" => F8,
-        "F9" => F9,
-        "F10" => F10,
-        "F11" => F11,
-        "F12" => F12,
-        "SPACE" => Space,
-        "ENTER" => Enter,
-        "TAB" => Tab,
-        "ESC" => Escape,
-        "ESCAPE" => Escape,
-        "INSERT" => Insert,
-        "DELETE" | "DEL" => Delete,
-        "HOME" => Home,
-        "END" => End,
-        "PAGEUP" | "PGUP" => PageUp,
-        "PAGEDOWN" | "PGDN" => PageDown,
-        "LEFT" => ArrowLeft,
-        "RIGHT" => ArrowRight,
-        "UP" => ArrowUp,
-        "DOWN" => ArrowDown,
-        "BACKSLASH" => Backslash,
-        "SLASH" => Slash,
-        "COMMA" => Comma,
-        "PERIOD" => Period,
-        "SEMICOLON" => Semicolon,
-        "QUOTE" => Quote,
-        "BACKQUOTE" | "`" => Backquote,
-        "MINUS" | "-" => Minus,
-        "EQUALS" | "=" => Equal,
-        "[" => BracketLeft,
-        "]" => BracketRight,
-        _ => return None,
-    })
+    log::error!("no safe global shortcut could be registered; use the tray icon to open Clipdeck");
 }
 
 /// Spawns the clipboard listener with a sink that writes to the DB and emits
@@ -475,25 +421,51 @@ pub fn install_clipboard_listener(app: &App) -> Result<()> {
     let (snapshot_tx, snapshot_rx) = mpsc::sync_channel::<SnapshotJob>(16);
     let snapshot_db = Arc::clone(&state.db);
     let snapshot_app = app.handle().clone();
+    let snapshot_storage_root = Arc::clone(&state.storage_root);
+    let snapshot_storage_operation = Arc::clone(&state.storage_operation);
     std::thread::Builder::new()
         .name("file-snapshot".into())
         .spawn(move || {
             while let Ok(job) = snapshot_rx.recv() {
+                let _storage_guard = snapshot_storage_operation.read();
+                if snapshot_db.get(job.id).ok().flatten().is_none() {
+                    continue;
+                }
+                let storage_root = snapshot_storage_root.read().clone();
                 match crate::storage::snapshot_files(
-                    &job.storage_root,
+                    &storage_root,
                     &job.hash,
                     &job.originals,
                     job.max_bytes,
-                )
-                .and_then(|assets| {
-                    let orphans = snapshot_db.set_file_assets(job.id, &assets)?;
-                    cleanup_asset_paths(&job.storage_root, orphans);
-                    snapshot_db.get_required(job.id)
-                }) {
-                    Ok(item) => {
-                        let _ = snapshot_app.emit("clip-updated", &item);
+                ) {
+                    Ok(assets) => match snapshot_db.set_file_assets(job.id, &assets) {
+                        Ok(orphans) => {
+                            cleanup_asset_paths(&storage_root, orphans);
+                            if let Ok(item) = snapshot_db.get_required(job.id) {
+                                let _ = snapshot_app.emit("clip-updated", &item);
+                            }
+                        }
+                        Err(error) => {
+                            let group = crate::storage::file_root(&storage_root).join(&job.hash);
+                            if group.exists() {
+                                cleanup_asset_paths(
+                                    &storage_root,
+                                    vec![group.to_string_lossy().into_owned()],
+                                );
+                            }
+                            log::error!("file snapshot DB update failed: {error}");
+                        }
+                    },
+                    Err(error) => {
+                        let group = crate::storage::file_root(&storage_root).join(&job.hash);
+                        if group.exists() {
+                            cleanup_asset_paths(
+                                &storage_root,
+                                vec![group.to_string_lossy().into_owned()],
+                            );
+                        }
+                        log::error!("file snapshot failed: {error}");
                     }
-                    Err(error) => log::error!("file snapshot failed: {error}"),
                 }
             }
         })
@@ -503,6 +475,7 @@ pub fn install_clipboard_listener(app: &App) -> Result<()> {
         db: Arc::clone(&state.db),
         app: app.handle().clone(),
         storage_root: Arc::clone(&state.storage_root),
+        storage_operation: Arc::clone(&state.storage_operation),
         settings: Arc::clone(&state.settings),
         snapshot_tx,
     });
@@ -514,6 +487,7 @@ struct TauriSink {
     db: Arc<Db>,
     app: AppHandle,
     storage_root: Arc<parking_lot::RwLock<PathBuf>>,
+    storage_operation: Arc<parking_lot::RwLock<()>>,
     settings: Arc<parking_lot::RwLock<Settings>>,
     snapshot_tx: mpsc::SyncSender<SnapshotJob>,
 }
@@ -522,7 +496,6 @@ struct SnapshotJob {
     id: i64,
     hash: String,
     originals: Vec<String>,
-    storage_root: PathBuf,
     max_bytes: u64,
 }
 
@@ -543,9 +516,14 @@ impl CaptureSink for TauriSink {
             return;
         }
 
+        let _storage_guard = self.storage_operation.read();
         let storage_root = self.storage_root.read().clone();
         match persist(&self.db, &storage_root, &event, &settings) {
             Ok(Persisted { item, is_new }) => {
+                match self.db.prune(settings.max_items, settings.retention_days) {
+                    Ok(orphans) => cleanup_asset_paths(&storage_root, orphans),
+                    Err(error) => log::error!("automatic history cleanup failed: {error}"),
+                }
                 if is_new {
                     let _ = self.app.emit("clip-updated", &item);
                 } else {
@@ -568,7 +546,6 @@ impl CaptureSink for TauriSink {
                         id: item.id,
                         hash: event.content_hash.clone(),
                         originals: event.files.clone(),
-                        storage_root,
                         max_bytes: u64::from(settings.max_snapshot_size_mb) * 1024 * 1024,
                     };
                     match self.snapshot_tx.try_send(job) {
@@ -576,11 +553,16 @@ impl CaptureSink for TauriSink {
                         Err(mpsc::TrySendError::Full(job)) => {
                             self.mark_snapshot_failed(
                                 job,
+                                &storage_root,
                                 "Snapshot queue was busy; copy the files again to retry",
                             );
                         }
                         Err(mpsc::TrySendError::Disconnected(job)) => {
-                            self.mark_snapshot_failed(job, "Snapshot worker is unavailable");
+                            self.mark_snapshot_failed(
+                                job,
+                                &storage_root,
+                                "Snapshot worker is unavailable",
+                            );
                         }
                     }
                 }
@@ -603,7 +585,12 @@ fn source_matches_ignored(source: &crate::models::SourceApp, ignored: &str) -> b
 }
 
 impl TauriSink {
-    fn mark_snapshot_failed(&self, job: SnapshotJob, message: &str) {
+    fn mark_snapshot_failed(
+        &self,
+        job: SnapshotJob,
+        storage_root: &std::path::Path,
+        message: &str,
+    ) {
         let assets: Vec<StoredFile> = job
             .originals
             .iter()
@@ -617,7 +604,7 @@ impl TauriSink {
             })
             .collect();
         match self.db.set_file_assets(job.id, &assets) {
-            Ok(orphans) => cleanup_asset_paths(&job.storage_root, orphans),
+            Ok(orphans) => cleanup_asset_paths(storage_root, orphans),
             Err(error) => log::error!("could not record snapshot queue failure: {error}"),
         }
     }
@@ -711,21 +698,7 @@ fn write_thumbnail(bytes: &[u8], dest: &std::path::Path) -> Result<()> {
 /// Pushes the runtime parts of the settings (hotkey, backdrop, theme) to the
 /// running app. Called from `save_settings`.
 pub fn apply_runtime_settings(app: &AppHandle, settings: &Settings) -> Result<()> {
-    if let Err(e) = register_shortcut_on_handle(app, &settings.hotkey) {
-        log::warn!("could not re-register hotkey: {e}");
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        let dark = match settings.theme {
-            crate::models::ThemeMode::Dark => true,
-            crate::models::ThemeMode::Light => false,
-            crate::models::ThemeMode::System => crate::win::appearance::read().dark,
-        };
-        let effective = crate::win::backdrop::apply(&window, settings.backdrop, dark);
-        let _ = window.eval(format!(
-            "window.dispatchEvent(new CustomEvent('clipdeck:backdrop', {{ detail: {:?} }}));",
-            effective
-        ));
-    }
+    crate::native_appearance::apply_all(app, settings);
     let autostart = app.autolaunch();
     let autostart_result = if settings.launch_at_login {
         autostart.enable()
@@ -738,58 +711,65 @@ pub fn apply_runtime_settings(app: &AppHandle, settings: &Settings) -> Result<()
     Ok(())
 }
 
-fn register_shortcut_on_handle(app: &AppHandle, combo: &str) -> Result<()> {
-    let manager = app.global_shortcut();
-    manager.unregister_all().ok();
-
-    let parts: Vec<&str> = combo.split('+').map(str::trim).collect();
-    let mut modifiers = Modifiers::empty();
-    let mut code: Option<Code> = None;
-    for part in parts {
-        match part.to_ascii_lowercase().as_str() {
-            "ctrl" | "control" => modifiers |= Modifiers::CONTROL,
-            "shift" => modifiers |= Modifiers::SHIFT,
-            "alt" => modifiers |= Modifiers::ALT,
-            "super" | "win" | "meta" => modifiers |= Modifiers::META,
-            key => {
-                code = Some(
-                    key_name_to_code(key)
-                        .ok_or_else(|| Error::Other(format!("unknown hotkey token: {key}")))?,
-                )
-            }
-        }
+fn switch_hotkey(app: &AppHandle, combo: &str) -> Result<()> {
+    let shortcut = crate::hotkey::parse(combo)?;
+    let state: tauri::State<AppState> = app.state();
+    let mut active = state.active_hotkey.lock();
+    if active.as_ref() == Some(&shortcut) {
+        return Ok(());
     }
-    let code = code.ok_or_else(|| Error::Other("hotkey must include a non-modifier key".into()))?;
-    let shortcut = Shortcut::new(Some(modifiers), code);
 
-    let app_handle = app.clone();
+    let manager = app.global_shortcut();
     manager
-        .on_shortcut(shortcut, move |_app, _scut, event| {
+        .on_shortcut(shortcut, move |app, _scut, event| {
             if matches!(event.state(), ShortcutState::Pressed) {
-                if let Some(window) = app_handle.get_webview_window("main") {
+                if let Some(window) = app.get_webview_window("main") {
                     crate::window::toggle(&window);
                 }
             }
         })
         .map_err(|e| Error::Other(format!("hotkey registration failed: {e}")))?;
+
+    if let Some(previous) = *active {
+        if let Err(error) = manager.unregister(previous) {
+            if let Err(rollback_error) = manager.unregister(shortcut) {
+                log::error!("could not roll back new hotkey registration: {rollback_error}");
+            }
+            return Err(Error::Other(format!(
+                "previous hotkey could not be released: {error}"
+            )));
+        }
+    }
+    *active = Some(shortcut);
     Ok(())
 }
 
 pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> {
     if let Some(existing) = app.get_webview_window("settings") {
+        let state: tauri::State<AppState> = app.state();
+        let settings = state.settings.read().clone();
+        let system = crate::win::appearance::read();
+        crate::native_appearance::apply_window(&existing, &settings, &system);
         let _ = existing.show();
         let _ = existing.set_focus();
         return Ok(());
     }
-    WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("Clipdeck settings")
-        .inner_size(800.0, 680.0)
-        .min_inner_size(680.0, 560.0)
-        .resizable(true)
-        .decorations(true)
-        .skip_taskbar(true)
-        .center()
-        .build()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let window =
+        WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
+            .title("Clipdeck settings")
+            .inner_size(800.0, 680.0)
+            .min_inner_size(680.0, 560.0)
+            .resizable(true)
+            .decorations(true)
+            .skip_taskbar(true)
+            .center()
+            .visible(false)
+            .build()
+            .map_err(|e| e.to_string())?;
+    let state: tauri::State<AppState> = app.state();
+    let settings = state.settings.read().clone();
+    let system = crate::win::appearance::read();
+    crate::native_appearance::apply_window(&window, &settings, &system);
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
 }

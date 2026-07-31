@@ -44,6 +44,7 @@ export const api = {
     invoke<Settings>('change_storage_location', { path }),
   pruneNow: () => invoke<void>('prune_now'),
   appearance: () => invoke<SystemAppearance>('appearance'),
+  syncNativeAppearance: () => invoke<SystemAppearance>('sync_native_appearance'),
   openSettingsWindow: () => invoke<void>('open_settings_window'),
   hideWindow: () => invoke<void>('hide_window'),
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
