@@ -1,113 +1,86 @@
-/* Fluent 2 design tokens for Clipdeck.
- *
- * Tailwind v4 reads these via `@theme`. The values match the Windows 11
- * control panel and Settings app so the popup reads as a native surface even
- * though we draw it from the webview.
- *
- * Variables are organised in three layers:
- *   1. Brand      — accent (overridden by the OS accent on startup)
- *   2. Neutral    — surfaces and text in light + dark
- *   3. Typography — the Segoe UI Variable ramp with the optical-size axis
- */
-
-@theme {
-  /* Accent / brand. The OS accent overrides these at runtime via a CSS
-   * variable on :root, so the values below are only fallbacks. */
-  --color-accent-light: #0078D4;
-  --color-accent-light-hover: #106EBE;
-  --color-accent-light-pressed: #005A9E;
-  --color-accent-dark: #4CC2FF;
-  --color-accent-dark-hover: #62CDFF;
-  --color-accent-dark-pressed: #3CA5E0;
-
-  /* Neutral ramp — adapted from Fluent 2 neutral palette. */
-  --color-bg-light: #FAFAFA;
-  --color-bg-light-elevated: #FFFFFF;
-  --color-bg-light-subtle: #F3F3F3;
-  --color-bg-dark: #1C1C1C;
-  --color-bg-dark-elevated: #2C2C2C;
-  --color-bg-dark-subtle: #232323;
-
-  --color-stroke-light: #E5E5E5;
-  --color-stroke-light-subtle: #EDEDED;
-  --color-stroke-dark: #3F3F3F;
-  --color-stroke-dark-subtle: #2E2E2E;
-
-  --color-text-light: #1C1C1C;
-  --color-text-light-secondary: #5C5C5C;
-  --color-text-dark: #FFFFFF;
-  --color-text-dark-secondary: #BFBFBF;
-
-  /* Geometry. */
-  --radius-control: 4px;
-  --radius-overlay: 8px;
-  --radius-pill: 999px;
-  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14), 0 0 1px rgba(0, 0, 0, 0.18);
-  --shadow-flyout-dark: 0 8px 16px rgba(0, 0, 0, 0.36), 0 0 1px rgba(0, 0, 0, 0.5);
-
-  /* Typography ramp. The `opsz` axis lets Segoe UI Variable become more
-   * display-like at large sizes and tighter at small ones. */
-  --font-display: 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif;
-  --font-text: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
-  --font-small: 'Segoe UI Variable Small', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, monospace;
-
-  /* Spacing scale (4-px base, with a couple of jumps for visual rhythm). */
-  --spacing-0: 0;
-  --spacing-1: 2px;
-  --spacing-2: 4px;
-  --spacing-3: 8px;
-  --spacing-4: 12px;
-  --spacing-5: 16px;
-  --spacing-6: 20px;
-  --spacing-7: 24px;
-  --spacing-8: 32px;
-  --spacing-9: 40px;
-
-  /* Motion. The 167 ms cubic-bezier matches the Fluent "fast" curve that
-   * SystemUI uses for tooltips and flyouts. */
-  --motion-fast: 167ms cubic-bezier(0, 0, 0, 1);
-  --motion-medium: 250ms cubic-bezier(0, 0, 0, 1);
-}
-
-/* Light theme defaults — overridden by `[data-theme="dark"]` on :root. */
 :root {
-  --color-accent: var(--color-accent-light);
-  --color-accent-hover: var(--color-accent-light-hover);
-  --color-accent-pressed: var(--color-accent-light-pressed);
-  --color-bg: var(--color-bg-light);
-  --color-bg-elevated: var(--color-bg-light-elevated);
-  --color-bg-subtle: var(--color-bg-light-subtle);
-  --color-stroke: var(--color-stroke-light);
-  --color-stroke-subtle: var(--color-stroke-light-subtle);
-  --color-text: var(--color-text-light);
-  --color-text-secondary: var(--color-text-light-secondary);
-  --shadow-flyout-current: var(--shadow-flyout);
+  color-scheme: dark;
+  --font-ui: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+
+  --window: #181818;
+  --pane: #202020;
+  --surface: #252525;
+  --surface-raised: #2b2b2b;
+  --hover: #303030;
+  --selected: #3a3a3a;
+  --pressed: #444444;
+  --input: #1c1c1c;
+
+  --text: #f1f1f1;
+  --text-secondary: #b8b8b8;
+  --text-muted: #858585;
+  --border: rgba(255, 255, 255, 0.105);
+  --border-strong: rgba(255, 255, 255, 0.18);
+  --focus: color-mix(in srgb, var(--accent) 78%, white);
+  --focus-ring: color-mix(in srgb, var(--accent) 24%, transparent);
+  --accent: #39b9e8;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --danger: #ef7777;
+  --danger-soft: rgba(239, 119, 119, 0.14);
+  --success: #62c68b;
+  --shadow: 0 18px 52px rgba(0, 0, 0, 0.36), 0 2px 8px rgba(0, 0, 0, 0.22);
+  --shadow-preview: 0 8px 24px rgba(0, 0, 0, 0.3);
+  --shadow-swatch: 0 12px 30px rgba(0, 0, 0, 0.16);
+  --checker-base: #151515;
+  --checker-tile: #1d1d1d;
+  --accent-foreground: #07151b;
+
+  --radius-control: 8px;
+  --radius-panel: 12px;
+  --transition-fast: 130ms cubic-bezier(0.2, 0, 0, 1);
 }
 
-[data-theme='dark'] {
-  --color-accent: var(--color-accent-dark);
-  --color-accent-hover: var(--color-accent-dark-hover);
-  --color-accent-pressed: var(--color-accent-dark-pressed);
-  --color-bg: var(--color-bg-dark);
-  --color-bg-elevated: var(--color-bg-dark-elevated);
-  --color-bg-subtle: var(--color-bg-dark-subtle);
-  --color-stroke: var(--color-stroke-dark);
-  --color-stroke-subtle: var(--color-stroke-dark-subtle);
-  --color-text: var(--color-text-dark);
-  --color-text-secondary: var(--color-text-dark-secondary);
-  --shadow-flyout-current: var(--shadow-flyout-dark);
+[data-theme='light'] {
+  color-scheme: light;
+  --window: #f5f5f5;
+  --pane: #fafafa;
+  --surface: #ffffff;
+  --surface-raised: #f7f7f7;
+  --hover: #ededed;
+  --selected: #e5e5e5;
+  --pressed: #dbdbdb;
+  --input: #ffffff;
+
+  --text: #191919;
+  --text-secondary: #575757;
+  --text-muted: #767676;
+  --border: rgba(0, 0, 0, 0.105);
+  --border-strong: rgba(0, 0, 0, 0.2);
+  --accent-soft: color-mix(in srgb, var(--accent) 13%, transparent);
+  --danger: #b42318;
+  --danger-soft: rgba(180, 35, 24, 0.09);
+  --success: #16794b;
+  --shadow: 0 18px 52px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-preview: 0 8px 24px rgba(0, 0, 0, 0.16);
+  --shadow-swatch: 0 12px 30px rgba(0, 0, 0, 0.1);
+  --checker-base: #eeeeee;
+  --checker-tile: #e2e2e2;
+  --accent-foreground: #ffffff;
 }
 
-/* Forced-colors mode (Windows High Contrast): let the OS palette take over. */
 @media (forced-colors: active) {
   :root {
-    --color-bg: Canvas;
-    --color-bg-elevated: Canvas;
-    --color-bg-subtle: Canvas;
-    --color-text: CanvasText;
-    --color-text-secondary: CanvasText;
-    --color-stroke: CanvasText;
-    --color-accent: Highlight;
+    --window: Canvas;
+    --pane: Canvas;
+    --surface: Canvas;
+    --surface-raised: Canvas;
+    --hover: Highlight;
+    --selected: Highlight;
+    --pressed: Highlight;
+    --input: Field;
+    --text: CanvasText;
+    --text-secondary: CanvasText;
+    --text-muted: GrayText;
+    --border: CanvasText;
+    --border-strong: CanvasText;
+    --accent: Highlight;
+    --focus: Highlight;
+    --danger: LinkText;
   }
 }

@@ -21,7 +21,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId,
-    SetForegroundWindow, ShowWindow, ASFW_ANY, SW_RESTORE,
+    IsWindow, SetForegroundWindow, ShowWindow, ASFW_ANY, SW_RESTORE,
 };
 
 /// Sends Ctrl+V to the foreground window captured before the popup opened.
@@ -32,6 +32,10 @@ pub fn paste_to(target: isize) -> bool {
     let target = HWND(target as *mut _);
 
     unsafe {
+        if !IsWindow(Some(target)).as_bool() {
+            return false;
+        }
+
         // Drop any modifiers the user may have been holding when they pressed
         // the hotkey so the synthetic V is a bare `Ctrl+V`.
         release_modifiers();
@@ -40,14 +44,8 @@ pub fn paste_to(target: isize) -> bool {
         // background process cannot move focus.
         let _ = AllowSetForegroundWindow(ASFW_ANY);
 
-        let _ = ShowWindow(target, SW_RESTORE);
-        let _ = BringWindowToTop(target);
-        let _ = SetForegroundWindow(target);
-
         // Attach the input threads so the keystroke is delivered even if the
         // shell briefly intercepted the focus transition.
-        let mut target_pid = 0u32;
-        GetWindowThreadProcessId(target, Some(&mut target_pid));
         let target_tid = window_thread_id(target);
         let our_tid = current_thread_id();
 
@@ -55,14 +53,17 @@ pub fn paste_to(target: isize) -> bool {
             let _ = AttachThreadInput(our_tid, target_tid, true);
         }
 
-        send_ctrl_v();
+        let _ = ShowWindow(target, SW_RESTORE);
+        let _ = BringWindowToTop(target);
+        let focused = SetForegroundWindow(target).as_bool();
+        let sent = focused && send_ctrl_v();
 
         if target_tid != 0 && our_tid != 0 && target_tid != our_tid {
             let _ = AttachThreadInput(our_tid, target_tid, false);
         }
-    }
 
-    true
+        sent
+    }
 }
 
 unsafe fn release_modifiers() {
@@ -90,7 +91,7 @@ unsafe fn is_key_down(vk: VIRTUAL_KEY) -> bool {
 /// Used to release modifier keys (Ctrl/Shift/Alt/Win) before we push the real
 /// `Ctrl+V`, so the target doesn't receive stray chord input.
 fn send_key(vk: VIRTUAL_KEY, up: bool) {
-    let mut flags = KEYEVENTF_SCANCODE;
+    let mut flags = windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(0);
     if up {
         flags |= KEYEVENTF_KEYUP;
     }
@@ -115,7 +116,7 @@ fn send_key(vk: VIRTUAL_KEY, up: bool) {
 
 /// Sends Ctrl+V via `SendInput`. Scan codes are used so the keystroke reaches
 /// apps that have ScanCodeMap overrides.
-fn send_ctrl_v() {
+fn send_ctrl_v() -> bool {
     let ctrl = 0x1D;
     let v = 0x2F;
 
@@ -126,9 +127,7 @@ fn send_ctrl_v() {
         build_input(ctrl, true),
     ];
 
-    unsafe {
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
-    }
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) == inputs.len() as u32 }
 }
 
 fn build_input(scan_code: u16, up: bool) -> INPUT {

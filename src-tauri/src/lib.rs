@@ -4,32 +4,41 @@
 //! Everything else in the crate is reached through commands or events emitted
 //! from inside `run`.
 
+#[cfg(not(test))]
 use std::path::PathBuf;
+#[cfg(not(test))]
 use std::sync::Arc;
 
+#[cfg(not(test))]
 use tauri::{Manager, WindowEvent};
+#[cfg(not(test))]
 use tauri_plugin_autostart::MacosLauncher;
 
 pub mod clipboard;
+#[cfg(not(test))]
 pub mod commands;
 pub mod db;
 pub mod error;
 pub mod models;
+pub mod storage;
+#[cfg(not(test))]
 pub mod tray;
+#[cfg(not(test))]
 pub mod window;
 
 mod win;
 
 /// Shared application state handed to every command handler.
+#[cfg(not(test))]
 pub struct AppState {
     pub db: Arc<db::Db>,
-    pub image_root: PathBuf,
-    pub thumb_root: PathBuf,
-    pub settings: parking_lot::RwLock<models::Settings>,
+    pub storage_root: Arc<parking_lot::RwLock<PathBuf>>,
+    pub settings: Arc<parking_lot::RwLock<models::Settings>>,
     pub foreground: parking_lot::Mutex<isize>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(not(test))]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -39,6 +48,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
@@ -50,15 +60,20 @@ pub fn run() {
             commands::copy_to_clipboard,
             commands::paste_active,
             commands::set_favorite,
+            commands::edit_item,
             commands::delete_item,
             commands::clear_history,
+            commands::clear_category,
             commands::counts,
             commands::load_settings,
             commands::save_settings,
+            commands::change_storage_location,
             commands::prune_now,
             commands::appearance,
             commands::open_settings_window,
             commands::hide_window,
+            commands::set_always_on_top,
+            commands::set_preview_visible,
             commands::quit_app,
         ])
         .setup(|app| {
@@ -81,25 +96,38 @@ pub fn run() {
 /// Wires up everything that has to be alive before the first window appears:
 /// the SQLite database, the asset directories, the clipboard listener, the
 /// tray icon, and the global shortcut.
+#[cfg(not(test))]
 fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("could not resolve app data dir: {e}"))?;
-    let image_root = data_dir.join("images");
-    let thumb_root = data_dir.join("thumbs");
-    std::fs::create_dir_all(&image_root)?;
-    std::fs::create_dir_all(&thumb_root)?;
-
     let db_path = data_dir.join("clipdeck.db");
     let db = Arc::new(db::Db::open(&db_path)?);
-    let settings = parking_lot::RwLock::new(db.load_settings().unwrap_or_default());
+    let loaded_settings = db.load_settings().unwrap_or_default();
+    db.save_settings(&loaded_settings)?;
+    let settings = Arc::new(parking_lot::RwLock::new(loaded_settings));
+    let requested_root = settings
+        .read()
+        .storage_path
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| data_dir.clone());
+    let storage_path = if storage::prepare_root(&requested_root).is_ok() {
+        requested_root
+    } else {
+        storage::prepare_root(&data_dir)?;
+        settings.write().storage_path = None;
+        db.save_settings(&settings.read())?;
+        data_dir.clone()
+    };
+    app.asset_protocol_scope()
+        .allow_directory(&storage_path, true)?;
 
     let state = AppState {
         db: Arc::clone(&db),
-        image_root,
-        thumb_root,
-        settings,
+        storage_root: Arc::new(parking_lot::RwLock::new(storage_path)),
+        settings: Arc::clone(&settings),
         foreground: parking_lot::Mutex::new(0),
     };
     app.manage(state);

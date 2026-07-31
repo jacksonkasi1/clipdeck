@@ -11,7 +11,8 @@
 //! * Image bytes live on disk, never in the database, so listing history rows
 //!   stays cheap regardless of how many screenshots were captured.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use parking_lot::Mutex;
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -19,12 +20,13 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::error::{Error, Result};
 use crate::models::{
     now_ms, ClipItem, Counts, ImageMeta, ItemKind, ListQuery, NewItem, Settings, SourceApp,
+    StoredFile,
 };
 
 /// Column list shared by every read query so that `row_to_item` stays valid.
 const COLUMNS: &str = "id, kind, preview, content, html, rtf, image_path, thumb_path, \
      image_w, image_h, file_paths, size_bytes, app_name, app_exe, app_icon, \
-     favorite, copy_count, first_copied_at, last_copied_at";
+     favorite, copy_count, first_copied_at, last_copied_at, file_assets";
 
 /// Plain text plus the optional HTML and RTF representations stored for an item.
 pub type RichFlavors = (String, Option<String>, Option<String>);
@@ -159,6 +161,20 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 "#,
         )?;
+        if !column_exists(conn, "items", "file_assets")? {
+            conn.execute("ALTER TABLE items ADD COLUMN file_assets TEXT", [])?;
+        }
+        // Early builds persisted boolean format flags into the TEXT flavor
+        // columns. Normalize those rows so reads cannot fail with an SQLite
+        // InvalidColumnType error and hide the entire history list.
+        conn.execute_batch(
+            "UPDATE items
+                SET html = CASE WHEN CAST(html AS INTEGER) = 1 THEN '' ELSE NULL END
+              WHERE typeof(html) = 'integer' OR html IN ('0', '1');
+             UPDATE items
+                SET rtf = CASE WHEN CAST(rtf AS INTEGER) = 1 THEN '' ELSE NULL END
+              WHERE typeof(rtf) = 'integer' OR rtf IN ('0', '1');",
+        )?;
         Ok(())
     }
 
@@ -186,7 +202,9 @@ CREATE TABLE IF NOT EXISTS settings (
                         last_copied_at = ?2,
                         app_name = COALESCE(?3, app_name),
                         app_exe  = COALESCE(?4, app_exe),
-                        app_icon = COALESCE(?5, app_icon)
+                        app_icon = COALESCE(?5, app_icon),
+                        html = COALESCE(?6, html),
+                        rtf = COALESCE(?7, rtf)
                   WHERE id = ?1",
                 params![
                     id,
@@ -194,6 +212,8 @@ CREATE TABLE IF NOT EXISTS settings (
                     item.source.as_ref().map(|s| &s.name),
                     item.source.as_ref().map(|s| &s.exe_path),
                     item.source.as_ref().and_then(|s| s.icon_path.as_ref()),
+                    item.html,
+                    item.rtf,
                 ],
             )?;
             return Ok(Upsert::Bumped(id));
@@ -209,6 +229,11 @@ CREATE TABLE IF NOT EXISTS settings (
         } else {
             Some(serde_json::to_string(&item.files).unwrap_or_default())
         };
+        let file_assets_json = if item.file_assets.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&item.file_assets).unwrap_or_default())
+        };
 
         conn.execute(
             "INSERT INTO items (
@@ -216,20 +241,22 @@ CREATE TABLE IF NOT EXISTS settings (
                 image_path, thumb_path, image_w, image_h,
                 file_paths, size_bytes, hash,
                 app_name, app_exe, app_icon,
-                favorite, copy_count, first_copied_at, last_copied_at
+                favorite, copy_count, first_copied_at, last_copied_at,
+                file_assets
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12,
                 ?13, ?14, ?15,
-                0, 1, ?16, ?16
+                0, 1, ?16, ?16,
+                ?17
              )",
             params![
                 item.kind.as_str(),
                 preview,
                 item.content,
-                item.has_html,
-                item.has_rtf,
+                item.html,
+                item.rtf,
                 item.image.as_ref().map(|i| &i.path),
                 item.image.as_ref().map(|i| &i.thumb_path),
                 item.image.as_ref().map(|i| i.width),
@@ -241,6 +268,7 @@ CREATE TABLE IF NOT EXISTS settings (
                 item.source.as_ref().map(|s| &s.exe_path),
                 item.source.as_ref().and_then(|s| s.icon_path.as_ref()),
                 now,
+                file_assets_json,
             ],
         )?;
 
@@ -279,7 +307,7 @@ CREATE TABLE IF NOT EXISTS settings (
             sql.push_str(" AND favorite = 1");
         }
 
-        sql.push_str(" ORDER BY last_copied_at DESC LIMIT ? OFFSET ?");
+        sql.push_str(" ORDER BY favorite DESC, last_copied_at DESC LIMIT ? OFFSET ?");
         binds.push(Box::new(limit));
         binds.push(Box::new(offset));
 
@@ -320,29 +348,92 @@ CREATE TABLE IF NOT EXISTS settings (
     }
 
     pub fn set_favorite(&self, id: i64, favorite: bool) -> Result<()> {
-        self.conn.lock().execute(
+        let changed = self.conn.lock().execute(
             "UPDATE items SET favorite = ?2 WHERE id = ?1",
             params![id, favorite as i32],
         )?;
-        Ok(())
+        require_changed(changed, "clipboard item")
+    }
+
+    /// Replaces the managed file snapshot state after the background copy
+    /// worker completes. Original user paths remain unchanged in `file_paths`.
+    pub fn set_file_assets(&self, id: i64, assets: &[StoredFile]) -> Result<Vec<String>> {
+        let json =
+            serde_json::to_string(assets).map_err(|error| Error::Other(error.to_string()))?;
+        let size_bytes: i64 = assets
+            .iter()
+            .filter(|asset| asset.stored_path.is_some())
+            .map(|asset| asset.size_bytes.min(i64::MAX as u64) as i64)
+            .sum();
+        let conn = self.conn.lock();
+        let previous = collect_assets(&conn, "WHERE id = ?1", params![id])?;
+        let changed = conn.execute(
+            "UPDATE items SET file_assets = ?2, size_bytes = ?3 WHERE id = ?1",
+            params![id, json, size_bytes],
+        )?;
+        require_changed(changed, "clipboard item")?;
+        filter_unreferenced_assets(&conn, previous)
+    }
+
+    pub fn update_text_content(
+        &self,
+        id: i64,
+        content: &str,
+        kind: ItemKind,
+        hash: &str,
+    ) -> Result<ClipItem> {
+        let preview = truncate_chars(
+            content
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or_else(|| content.trim()),
+            PREVIEW_LIMIT,
+        );
+        let conn = self.conn.lock();
+        let conflict: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM items WHERE hash = ?1 AND id != ?2",
+                params![hash, id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if conflict.is_some() {
+            return Err(Error::Other(
+                "an identical clipboard item already exists".into(),
+            ));
+        }
+        let changed = conn.execute(
+            "UPDATE items
+                SET kind = ?2, preview = ?3, content = ?4, hash = ?5,
+                    html = NULL, rtf = NULL, last_copied_at = ?6
+              WHERE id = ?1 AND kind NOT IN ('image', 'files')",
+            params![id, kind.as_str(), preview, content, hash, now_ms()],
+        )?;
+        if changed == 0 {
+            return Err(Error::NotFound("editable clipboard item"));
+        }
+        drop(conn);
+        self.get_required(id)
     }
 
     /// Marks an entry as just-used without incrementing the copy counter, so
     /// pasting from history floats the entry back to the top of the list.
     pub fn touch(&self, id: i64) -> Result<()> {
-        self.conn.lock().execute(
+        let changed = self.conn.lock().execute(
             "UPDATE items SET last_copied_at = ?2 WHERE id = ?1",
             params![id, now_ms()],
         )?;
-        Ok(())
+        require_changed(changed, "clipboard item")
     }
 
     /// Deletes one entry, returning any on-disk assets that are now orphaned.
     pub fn delete(&self, id: i64) -> Result<Vec<String>> {
         let conn = self.conn.lock();
         let assets = collect_assets(&conn, "WHERE id = ?1", params![id])?;
-        conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
-        Ok(assets)
+        let changed = conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
+        require_changed(changed, "clipboard item")?;
+        filter_unreferenced_assets(&conn, assets)
     }
 
     /// Clears history. Starred entries survive unless `include_favorites`.
@@ -355,21 +446,38 @@ CREATE TABLE IF NOT EXISTS settings (
         };
         let assets = collect_assets(&conn, filter, params![])?;
         conn.execute(&format!("DELETE FROM items {filter}"), params![])?;
-        Ok(assets)
+        filter_unreferenced_assets(&conn, assets)
+    }
+
+    /// Clears one clipboard category while preserving favorites by default.
+    pub fn clear_kind(&self, kind: ItemKind, include_favorites: bool) -> Result<Vec<String>> {
+        let conn = self.conn.lock();
+        let filter = if include_favorites {
+            "WHERE kind = ?1"
+        } else {
+            "WHERE kind = ?1 AND favorite = 0"
+        };
+        let assets = collect_assets(&conn, filter, params![kind.as_str()])?;
+        conn.execute(
+            &format!("DELETE FROM items {filter}"),
+            params![kind.as_str()],
+        )?;
+        filter_unreferenced_assets(&conn, assets)
     }
 
     /// Enforces the retention policy. Starred entries are never pruned.
     ///
     /// Returns the on-disk assets belonging to the removed rows.
     pub fn prune(&self, max_items: u32, retention_days: u32) -> Result<Vec<String>> {
-        let conn = self.conn.lock();
+        let mut conn = self.conn.lock();
+        let transaction = conn.transaction()?;
         let mut assets = Vec::new();
 
         if retention_days > 0 {
             let cutoff = now_ms() - (retention_days as i64) * 86_400_000;
             let filter = "WHERE favorite = 0 AND last_copied_at < ?1";
-            assets.extend(collect_assets(&conn, filter, params![cutoff])?);
-            conn.execute(
+            assets.extend(collect_assets(&transaction, filter, params![cutoff])?);
+            transaction.execute(
                 "DELETE FROM items WHERE favorite = 0 AND last_copied_at < ?1",
                 params![cutoff],
             )?;
@@ -381,28 +489,48 @@ CREATE TABLE IF NOT EXISTS settings (
                               SELECT id FROM items WHERE favorite = 0
                               ORDER BY last_copied_at DESC LIMIT ?1
                           )";
-            assets.extend(collect_assets(&conn, filter, params![max_items])?);
-            conn.execute(&format!("DELETE FROM items {filter}"), params![max_items])?;
+            assets.extend(collect_assets(&transaction, filter, params![max_items])?);
+            transaction.execute(&format!("DELETE FROM items {filter}"), params![max_items])?;
         }
 
+        let assets = filter_unreferenced_assets(&transaction, assets)?;
+        transaction.commit()?;
         Ok(assets)
     }
 
     /// Aggregate counts surfaced to the UI for the status line.
     pub fn counts(&self) -> Result<Counts> {
         let conn = self.conn.lock();
-
-        let total: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))?;
-        let favorites: i64 =
-            conn.query_row("SELECT COUNT(*) FROM items WHERE favorite = 1", [], |r| {
-                r.get(0)
-            })?;
-
-        Ok(Counts {
-            total,
-            favorites,
-            pinned: favorites,
-        })
+        conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(favorite), 0),
+                COALESCE(SUM(CASE WHEN kind = 'text' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'image' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'files' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'link' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'color' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN kind = 'email' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(size_bytes), 0)
+             FROM items",
+            [],
+            |row| {
+                let favorites = row.get(1)?;
+                Ok(Counts {
+                    total: row.get(0)?,
+                    favorites,
+                    pinned: favorites,
+                    text: row.get(2)?,
+                    images: row.get(3)?,
+                    files: row.get(4)?,
+                    links: row.get(5)?,
+                    colors: row.get(6)?,
+                    emails: row.get(7)?,
+                    storage_bytes: row.get(8)?,
+                })
+            },
+        )
+        .map_err(Into::into)
     }
 
     /// The hash of the most recently captured entry. Used to short-circuit
@@ -429,9 +557,15 @@ CREATE TABLE IF NOT EXISTS settings (
 
         // Deserialise leniently: a settings blob written by an older build that
         // lacks newly added fields must not wipe the user's configuration.
-        Ok(raw
-            .and_then(|json| serde_json::from_str(&json).ok())
-            .unwrap_or_default())
+        let Some(json) = raw else {
+            return Ok(Settings::default());
+        };
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
+        if value.get("settingsVersion").is_none() {
+            value["settingsVersion"] = serde_json::json!(2);
+            value["showPreview"] = serde_json::json!(false);
+        }
+        Ok(serde_json::from_value(value).unwrap_or_default())
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
@@ -444,6 +578,77 @@ CREATE TABLE IF NOT EXISTS settings (
         )?;
         Ok(())
     }
+
+    /// Rewrites only managed asset paths after a verified storage migration.
+    pub fn migrate_storage(
+        &self,
+        old_root: &Path,
+        new_root: &Path,
+        settings: &Settings,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock();
+        let transaction = conn.transaction()?;
+        let rows = {
+            let mut statement =
+                transaction.prepare("SELECT id, image_path, thumb_path, file_assets FROM items")?;
+            let mapped = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        for (id, image_path, thumb_path, file_assets_json) in rows {
+            let image_path = image_path
+                .as_deref()
+                .and_then(|path| migrated_path(path, old_root, new_root));
+            let thumb_path = thumb_path
+                .as_deref()
+                .and_then(|path| migrated_path(path, old_root, new_root));
+            let mut assets = file_assets_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<Vec<StoredFile>>(json).ok())
+                .unwrap_or_default();
+            for asset in &mut assets {
+                if let Some(stored_path) = asset.stored_path.as_deref() {
+                    asset.stored_path = migrated_path(stored_path, old_root, new_root);
+                }
+            }
+            let assets_json = if assets.is_empty() {
+                None
+            } else {
+                Some(
+                    serde_json::to_string(&assets)
+                        .map_err(|error| Error::Other(error.to_string()))?,
+                )
+            };
+            transaction.execute(
+                "UPDATE items SET image_path = ?2, thumb_path = ?3, file_assets = ?4 WHERE id = ?1",
+                params![id, image_path, thumb_path, assets_json],
+            )?;
+        }
+        let settings_json =
+            serde_json::to_string(settings).map_err(|error| Error::Other(error.to_string()))?;
+        transaction.execute(
+            "INSERT INTO settings (key, value) VALUES ('app', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![settings_json],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+}
+
+fn migrated_path(value: &str, old_root: &Path, new_root: &Path) -> Option<String> {
+    let relative = PathBuf::from(value)
+        .strip_prefix(old_root)
+        .ok()?
+        .to_path_buf();
+    Some(new_root.join(relative).to_string_lossy().into_owned())
 }
 
 /// Gathers the image/thumbnail paths for rows matching `filter` so the caller can
@@ -453,22 +658,69 @@ fn collect_assets(
     filter: &str,
     binds: impl rusqlite::Params,
 ) -> Result<Vec<String>> {
-    let sql = format!("SELECT image_path, thumb_path FROM items {filter}");
+    let sql = format!("SELECT image_path, thumb_path, file_assets FROM items {filter}");
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(binds, |r| {
         Ok((
             r.get::<_, Option<String>>(0)?,
             r.get::<_, Option<String>>(1)?,
+            r.get::<_, Option<String>>(2)?,
         ))
     })?;
 
     let mut assets = Vec::new();
     for row in rows {
-        let (image, thumb) = row?;
+        let (image, thumb, file_assets) = row?;
         assets.extend(image);
         assets.extend(thumb);
+        if let Some(json) = file_assets {
+            let stored = serde_json::from_str::<Vec<StoredFile>>(&json).unwrap_or_default();
+            assets.extend(stored.into_iter().filter_map(|asset| asset.stored_path));
+        }
     }
     Ok(assets)
+}
+
+/// Removes candidates still referenced by any remaining row. This makes
+/// cleanup safe even after legacy databases or imports contain shared paths.
+fn filter_unreferenced_assets(conn: &Connection, candidates: Vec<String>) -> Result<Vec<String>> {
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut referenced = HashSet::new();
+    let mut statement = conn.prepare("SELECT image_path, thumb_path, file_assets FROM items")?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    })?;
+    for row in rows {
+        let (image, thumb, file_assets) = row?;
+        referenced.extend(image);
+        referenced.extend(thumb);
+        if let Some(json) = file_assets {
+            let stored = serde_json::from_str::<Vec<StoredFile>>(&json).unwrap_or_default();
+            referenced.extend(stored.into_iter().filter_map(|asset| asset.stored_path));
+        }
+    }
+
+    let mut unique = HashSet::new();
+    Ok(candidates
+        .into_iter()
+        .filter(|asset| !referenced.contains(asset))
+        .filter(|asset| unique.insert(asset.clone()))
+        .collect())
+}
+
+fn require_changed(changed: usize, resource: &'static str) -> Result<()> {
+    if changed == 0 {
+        Err(Error::NotFound(resource))
+    } else {
+        Ok(())
+    }
 }
 
 fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
@@ -487,6 +739,10 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
     let files = row
         .get::<_, Option<String>>(10)?
         .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .unwrap_or_default();
+    let file_assets = row
+        .get::<_, Option<String>>(19)?
+        .and_then(|json| serde_json::from_str::<Vec<StoredFile>>(&json).ok())
         .unwrap_or_default();
 
     let app_name: Option<String> = row.get(12)?;
@@ -509,6 +765,7 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         has_rtf: row.get::<_, Option<String>>(5)?.is_some(),
         image,
         files,
+        file_assets,
         size_bytes: row.get(11)?,
         source,
         favorite: row.get::<_, i32>(15)? != 0,
@@ -516,6 +773,17 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         first_copied_at: row.get(17)?,
         last_copied_at: row.get(18)?,
     })
+}
+
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for name in names {
+        if name? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Builds the single-line label shown in the list.
@@ -674,6 +942,50 @@ mod tests {
     }
 
     #[test]
+    fn favorites_are_pinned_above_newer_history() {
+        let db = Db::open_in_memory().unwrap();
+        let favorite = db.upsert(&text_item("favorite", "favorite")).unwrap().id();
+        db.set_favorite(favorite, true).unwrap();
+        db.upsert(&text_item("newer", "newer")).unwrap();
+
+        let items = db.list(&ListQuery::default()).unwrap();
+        assert_eq!(items[0].id, favorite);
+        assert!(items[0].favorite);
+    }
+
+    #[test]
+    fn category_clear_preserves_favorites() {
+        let db = Db::open_in_memory().unwrap();
+        let favorite = db.upsert(&text_item("favorite", "favorite")).unwrap().id();
+        db.set_favorite(favorite, true).unwrap();
+        db.upsert(&text_item("remove", "remove")).unwrap();
+
+        db.clear_kind(ItemKind::Text, false).unwrap();
+        let items = db.list(&ListQuery::default()).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, favorite);
+    }
+
+    #[test]
+    fn edited_content_updates_kind_and_search_index() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.upsert(&text_item("before", "before")).unwrap().id();
+        db.update_text_content(id, "person@clipdeck.local", ItemKind::Email, "after")
+            .unwrap();
+
+        let item = db.get_required(id).unwrap();
+        assert_eq!(item.kind, ItemKind::Email);
+        assert_eq!(item.content, "person@clipdeck.local");
+        let hits = db
+            .list(&ListQuery {
+                search: Some("person".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
     fn prune_respects_favorites_and_max_items() {
         let db = Db::open_in_memory().unwrap();
         let keep = db.upsert(&text_item("starred", "fav")).unwrap().id();
@@ -735,5 +1047,87 @@ mod tests {
         let loaded = db.load_settings().unwrap();
         assert_eq!(loaded.hotkey, "Ctrl+Alt+C");
         assert_eq!(loaded.max_items, 42);
+    }
+
+    #[test]
+    fn rich_flavors_are_persisted_verbatim() {
+        let db = Db::open_in_memory().unwrap();
+        let item = NewItem {
+            kind: ItemKind::Text,
+            content: "formatted".into(),
+            html: Some("<strong>formatted</strong>".into()),
+            rtf: Some(r"{\rtf1 formatted}".into()),
+            content_hash: "rich".into(),
+            ..Default::default()
+        };
+        let id = db.upsert(&item).unwrap().id();
+
+        let (plain, html, rtf) = db.flavors(id).unwrap().unwrap();
+        assert_eq!(plain, "formatted");
+        assert_eq!(html.as_deref(), Some("<strong>formatted</strong>"));
+        assert_eq!(rtf.as_deref(), Some(r"{\rtf1 formatted}"));
+        let loaded = db.get_required(id).unwrap();
+        assert!(loaded.has_html);
+        assert!(loaded.has_rtf);
+    }
+
+    #[test]
+    fn migration_normalizes_legacy_integer_flavor_flags() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.upsert(&text_item("legacy", "legacy")).unwrap().id();
+        {
+            let conn = db.conn.lock();
+            conn.execute(
+                "UPDATE items SET html = 1, rtf = 0 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+            Db::migrate(&conn).unwrap();
+        }
+
+        let item = db.get_required(id).unwrap();
+        assert!(item.has_html);
+        assert!(!item.has_rtf);
+    }
+
+    #[test]
+    fn deleting_one_row_does_not_orphan_shared_assets() {
+        let db = Db::open_in_memory().unwrap();
+        let shared_image = "C:/managed/images/shared.png";
+        let shared_thumb = "C:/managed/thumbs/shared.png";
+        let make_image = |hash: &str| NewItem {
+            kind: ItemKind::Image,
+            image: Some(ImageMeta {
+                path: shared_image.into(),
+                thumb_path: shared_thumb.into(),
+                width: 1,
+                height: 1,
+            }),
+            content_hash: hash.into(),
+            ..Default::default()
+        };
+        let first = db.upsert(&make_image("image-a")).unwrap().id();
+        let second = db.upsert(&make_image("image-b")).unwrap().id();
+
+        assert!(db.delete(first).unwrap().is_empty());
+        let final_assets = db.delete(second).unwrap();
+        assert_eq!(final_assets.len(), 2);
+    }
+
+    #[test]
+    fn missing_rows_fail_mutating_operations() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(matches!(
+            db.set_favorite(999, true),
+            Err(Error::NotFound("clipboard item"))
+        ));
+        assert!(matches!(
+            db.touch(999),
+            Err(Error::NotFound("clipboard item"))
+        ));
+        assert!(matches!(
+            db.delete(999),
+            Err(Error::NotFound("clipboard item"))
+        ));
     }
 }

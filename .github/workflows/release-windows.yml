@@ -1,20 +1,17 @@
-name: Windows CI
+name: Windows Release
 
 on:
   push:
-    branches:
-      - main
-      - "feat/**"
-      - "fix/**"
-  pull_request:
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: windows-ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,10 +19,12 @@ env:
   WINDOWS_TARGET: x86_64-pc-windows-msvc
 
 jobs:
-  validate-and-bundle:
-    name: Validate and bundle Windows x64
+  build:
+    name: Build and verify Windows x64 release
     runs-on: windows-latest
     timeout-minutes: 90
+    outputs:
+      version: ${{ steps.collect.outputs.version }}
 
     steps:
       - name: Check out source
@@ -88,18 +87,56 @@ jobs:
           ./scripts/smoke-test-windows.ps1
           -Executable "src-tauri/target/${{ env.WINDOWS_TARGET }}/release/clipdeck.exe"
 
-      - name: Collect and verify artifacts
+      - name: Collect and verify release artifacts
         id: collect
         shell: pwsh
-        run: >-
-          ./scripts/collect-windows-artifacts.ps1
-          -TargetTriple "${{ env.WINDOWS_TARGET }}"
-          -OutputDirectory "artifacts/windows-x64"
+        run: |
+          $expectedVersion = if ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}" -replace '^v', ''
+          } else {
+            ""
+          }
 
-      - name: Upload tested Windows bundle
+          ./scripts/collect-windows-artifacts.ps1 `
+            -TargetTriple "${{ env.WINDOWS_TARGET }}" `
+            -OutputDirectory "artifacts/windows-x64" `
+            -ExpectedVersion $expectedVersion
+
+      - name: Upload verified release bundle
         uses: actions/upload-artifact@v4
         with:
-          name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
+          name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
           path: artifacts/windows-x64/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 90
+
+  publish:
+    name: Publish GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified release bundle
+        uses: actions/download-artifact@v5
+        with:
+          name: clipdeck-windows-x64-${{ needs.build.outputs.version }}
+          path: release-assets
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Clipdeck $RELEASE_VERSION" \
+              --repo "$GITHUB_REPOSITORY"
+          fi

@@ -16,6 +16,7 @@ pub enum Error {
     #[error("image error: {0}")]
     Image(#[from] image::ImageError),
 
+    #[cfg(not(test))]
     #[error("tauri error: {0}")]
     Tauri(#[from] tauri::Error),
 

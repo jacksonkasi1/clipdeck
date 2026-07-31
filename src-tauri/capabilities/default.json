@@ -23,6 +23,9 @@
     "core:image:default",
     "global-shortcut:default",
     "autostart:default",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
+    "dialog:allow-open",
+    "dialog:allow-message"
   ]
 }

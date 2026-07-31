@@ -34,6 +34,7 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
             }
             "settings" => {
                 if let Some(window) = app.get_webview_window("settings") {
+                    let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_focus();
                 } else if let Err(err) = super::commands::show_settings_window(app) {

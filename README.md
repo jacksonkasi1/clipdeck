@@ -1,8 +1,7 @@
 # Clipdeck
 
 **Blazing-fast clipboard history for Windows.** Modeled on the Win+V flyout
-and ClipBook, with a Fluent 2 surface that reads as a native part of Windows
-11.
+with a Fluent 2 surface that reads as a native part of Windows 11.
 
 > Press **Ctrl + Shift + V** anywhere to summon the popup, type to filter,
 > arrow-keys to navigate, **Enter** to paste back to the app you were just
@@ -10,15 +9,19 @@ and ClipBook, with a Fluent 2 surface that reads as a native part of Windows
 
 ## Features
 
-- **Two-pane popup** — search, type filters, virtualised list on the left;
-  preview, toolbar, and details on the right.
+- **Compact by default** — a focused history window opens first; the optional
+  preview pane expands alongside it for editing, rich previews, and metadata.
 - **Captures everything** — text, links, emails, hex colors, images, file
   drops. Sensitive entries flagged by password managers are skipped
   automatically (`ExcludeClipboardContentFromMonitorProcessing`).
 - **Hash-based dedup** — copying the same thing twice just bumps the
   counter; the list never fills with duplicates.
 - **Full-text search** — SQLite FTS5 prefix search across the visible text,
-  ranked as-you-type.
+  ranked as-you-type and loaded incrementally for large histories.
+- **Complete history controls** — edit supported values, pin favorites, delete
+  individual entries, clear a type, or clear every non-favorite entry.
+- **Managed local storage** — durable image and file snapshots with configurable
+  location, retention, size limits, and safe verified migration.
 - **Fluent 2 / Windows 11 visuals** — Segoe UI Variable with the `opsz`
   optical-size axis, 8 px overlay / 4 px control radii, Mica or Acrylic
   backdrop from `window-vibrancy`, OS accent color injected from the
@@ -76,11 +79,11 @@ with Visual Studio Build Tools can instead run
 
 ```
 clipdeck/
-├── src/                      Frontend (React 19 + Vite 8)
+├── src/                      Frontend (React 19 + Vite 6)
 │   ├── App.tsx               Two-pane root, applies theme + accent
 │   ├── Settings.tsx          Settings window
-│   ├── components/           SearchBar, TypeTabs, ItemList, ItemRow,
-│   │                         PreviewPane, DetailsTable, Footer
+│   ├── components/           SearchBar, CommandPalette, ItemList, ItemRow,
+│   │                         PreviewPane, DetailsTable, Footer, shared icons
 │   ├── lib/                  store (zustand), tauri (typed invoke wrappers),
 │   │                         types (mirror of Rust models)
 │   └── styles/               tokens.css, app.css, global.css
@@ -165,9 +168,11 @@ flagged with `ExcludeClipboardContentFromMonitorProcessing` or
 `CanIncludeInClipboardHistory == 0` (set by 1Password, Bitwarden, KeePassXC,
 Windows Hello, etc.) are dropped before they reach the database.
 
-The SQLite database lives at `%APPDATA%\Clipdeck\clipdeck.db`. Image assets
-live at `%APPDATA%\Clipdeck\images\` with thumbnails at
-`%APPDATA%\Clipdeck\thumbs\`. Delete either directory to reset.
+The SQLite database and default managed content store live in Tauri's Clipdeck
+application-data directory. The Settings window shows the resolved storage
+location and can safely migrate image, thumbnail, and file snapshots to a
+different folder. History should be cleared from Settings so favorites and
+managed assets are handled consistently.
 
 ## License
 

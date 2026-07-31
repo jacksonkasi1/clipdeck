@@ -59,6 +59,29 @@ pub struct ImageMeta {
     pub height: u32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StoredFileStatus {
+    #[default]
+    Pending,
+    Ready,
+    Skipped,
+    Failed,
+}
+
+/// Durable snapshot metadata for a copied file or folder. The original path is
+/// display-only; history cleanup never mutates the original filesystem item.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredFile {
+    pub original_path: String,
+    pub stored_path: Option<String>,
+    pub size_bytes: u64,
+    pub is_directory: bool,
+    pub status: StoredFileStatus,
+    pub message: Option<String>,
+}
+
 /// The application that owned the clipboard when an entry was captured.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -87,6 +110,7 @@ pub struct ClipItem {
     pub has_rtf: bool,
     pub image: Option<ImageMeta>,
     pub files: Vec<String>,
+    pub file_assets: Vec<StoredFile>,
     pub size_bytes: i64,
     pub source: Option<SourceApp>,
     pub favorite: bool,
@@ -131,6 +155,9 @@ pub enum PasteFlavor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// Settings schema version used for one-time behavioral migrations.
+    #[serde(default = "default_settings_version")]
+    pub settings_version: u32,
     /// Global hotkey in Tauri accelerator syntax, e.g. `Ctrl+Shift+V`.
     pub hotkey: String,
     /// Maximum number of non-favorite entries retained. 0 disables pruning.
@@ -141,6 +168,15 @@ pub struct Settings {
     pub capture_images: bool,
     /// Capture file/folder copies.
     pub capture_files: bool,
+    /// Save durable snapshots for file/folder clipboard entries.
+    #[serde(default = "default_true")]
+    pub store_file_snapshots: bool,
+    /// Maximum bytes stored for one clipboard file or folder group.
+    #[serde(default = "default_snapshot_limit_mb")]
+    pub max_snapshot_size_mb: u32,
+    /// Optional managed-content root. `None` uses Windows app data.
+    #[serde(default)]
+    pub storage_path: Option<String>,
     /// Skip entries whose source executable matches one of these names.
     pub ignored_apps: Vec<String>,
     /// Window backdrop material.
@@ -158,6 +194,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            settings_version: 2,
             // Win+V is reserved by the OS shell and cannot be intercepted by a
             // user process, so we default to the de-facto convention used by
             // third-party clipboard managers on Windows.
@@ -166,12 +203,15 @@ impl Default for Settings {
             retention_days: 0,
             capture_images: true,
             capture_files: true,
+            store_file_snapshots: true,
+            max_snapshot_size_mb: 512,
+            storage_path: None,
             ignored_apps: Vec::new(),
             backdrop: Backdrop::Acrylic,
             theme: ThemeMode::System,
             paste_on_enter: true,
             launch_at_login: false,
-            show_preview: true,
+            show_preview: false,
         }
     }
 }
@@ -217,6 +257,13 @@ pub struct Counts {
     /// Entries pinned by the user (alias for favourites; reserved for the
     /// pin feature added in a later iteration).
     pub pinned: i64,
+    pub text: i64,
+    pub images: i64,
+    pub files: i64,
+    pub links: i64,
+    pub colors: i64,
+    pub emails: i64,
+    pub storage_bytes: i64,
 }
 
 /// The payload the listener hands to the persistence layer for each new
@@ -227,13 +274,28 @@ pub struct NewItem {
     pub kind: ItemKind,
     pub preview: String,
     pub content: String,
-    pub has_html: bool,
-    pub has_rtf: bool,
+    /// Original rich clipboard flavours. These are kept separately from plain
+    /// text so copying an entry back can faithfully restore formatting.
+    pub html: Option<String>,
+    pub rtf: Option<String>,
     pub image: Option<ImageMeta>,
     pub files: Vec<String>,
+    pub file_assets: Vec<StoredFile>,
     pub size_bytes: i64,
     pub content_hash: String,
     pub source: Option<SourceApp>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_snapshot_limit_mb() -> u32 {
+    512
+}
+
+fn default_settings_version() -> u32 {
+    2
 }
 
 /// Current unix timestamp in milliseconds.

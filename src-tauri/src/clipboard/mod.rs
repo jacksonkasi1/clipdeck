@@ -18,6 +18,7 @@ mod classifier;
 pub mod formats;
 mod hasher;
 pub mod listener;
+pub mod writer;
 
 pub use classifier::classify;
 pub use hasher::{hash_files, hash_image, hash_text};
@@ -30,8 +31,8 @@ pub struct CapturedPayload {
     pub kind: ItemKind,
     pub preview: String,
     pub content: String,
-    pub has_html: bool,
-    pub has_rtf: bool,
+    pub html: Option<String>,
+    pub rtf: Option<String>,
     pub image: Option<ImageMeta>,
     pub files: Vec<String>,
     pub size_bytes: u64,
