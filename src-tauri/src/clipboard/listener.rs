@@ -1,0 +1,298 @@
+//! Listens for clipboard changes and dispatches parsed content to a sink.
+//!
+//! Architecture:
+//!
+//! * A dedicated OS thread creates a hidden top-level window with
+//!   `WS_EX_TOOLWINDOW`. The window is 0×0, positioned at `(-32000, -32000)`
+//!   (the standard "minimised off-screen" coordinates) and never made visible.
+//! * `AddClipboardFormatListener` makes the shell broadcast
+//!   `WM_CLIPBOARDUPDATE` to us on every clipboard change.
+//! * The thread pumps a normal `GetMessageW`/`DispatchMessageW` loop.
+//! * Each notification triggers a `ClipEvent` delivered to the user-supplied
+//!   [`CaptureSink`].
+//!
+//! `HWND_MESSAGE` windows were ruled out by the Win32 documentation: message-
+//! only windows do not receive broadcast messages, and `WM_CLIPBOARDUPDATE` is
+//! exactly that.
+
+use std::sync::Arc;
+
+use windows::core::PCWSTR;
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::DataExchange::AddClipboardFormatListener;
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassExW, SetWindowPos,
+    TranslateMessage, HWND_TOP, MSG, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE, WINDOW_STYLE,
+    WM_CLIPBOARDUPDATE, WM_DESTROY, WNDCLASSEXW,
+};
+
+use crate::models::{ItemKind, SourceApp};
+
+use super::super::win::source;
+use super::formats::{self, Formats};
+use super::hasher;
+
+/// The single user-supplied callback that receives each parsed clipboard
+/// change. Implemented as a trait object so this module does not need to
+/// know about Tauri, the DB, or the frontend.
+pub trait CaptureSink: Send + Sync + 'static {
+    fn handle(&self, event: ClipEvent);
+}
+
+/// A new entry the UI should add to its history.
+#[derive(Debug)]
+pub struct ClipEvent {
+    pub kind: ItemKind,
+    pub preview: String,
+    pub content: String,
+    pub has_html: bool,
+    pub has_rtf: bool,
+    /// PNG bytes captured during the clipboard notification. Keeping these on
+    /// the event avoids reopening the clipboard after another app has changed it.
+    pub image_bytes: Option<Vec<u8>>,
+    pub files: Vec<String>,
+    pub size_bytes: i64,
+    pub source: Option<SourceApp>,
+    pub content_hash: String,
+}
+
+/// Starts the listener thread and returns once the hidden window has been
+/// registered with the shell.
+pub fn start_listener(sink: Arc<dyn CaptureSink>) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("clipboard-listener".into())
+        .spawn(move || {
+            if let Err(err) = run(sink) {
+                log::error!("clipboard listener terminated: {err}");
+            }
+        })
+        .map(|_| ())
+}
+
+/// Result of `run` so we can log a specific failure rather than panic on the
+/// listener thread (which would tear the process down silently).
+type BoxResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+fn run(sink: Arc<dyn CaptureSink>) -> BoxResult<()> {
+    unsafe {
+        let class_name = to_wide("ClipdeckListener");
+        let instance = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
+
+        let wc = WNDCLASSEXW {
+            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+            lpfnWndProc: Some(wndproc),
+            hInstance: instance.into(),
+            lpszClassName: PCWSTR(class_name.as_ptr()),
+            ..Default::default()
+        };
+        let atom = RegisterClassExW(&wc);
+        if atom == 0 {
+            return Err("RegisterClassExW failed".into());
+        }
+
+        // WS_EX_TOOLWINDOW keeps the window off Alt-Tab; WS_EX_NOPARENTNOTIFY
+        // prevents the broadcast from being forwarded as a parent notify.
+        let ex = WINDOW_EX_STYLE(0x00000080 | 0x00000004);
+        // WS_OVERLAPPED is the smallest valid top-level style; combined with a
+        // 0×0 size and an off-screen position it is invisible but still a
+        // top-level window — which is what `WM_CLIPBOARDUPDATE` requires.
+        let style = WINDOW_STYLE(0x00000000);
+
+        let title = to_wide("");
+        let hwnd = CreateWindowExW(
+            ex,
+            PCWSTR(class_name.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            style,
+            -32000,
+            -32000,
+            0,
+            0,
+            None,
+            None,
+            Some(HINSTANCE(instance.0)),
+            None,
+        )
+        .map_err(|e| format!("CreateWindowExW: {e}"))?;
+
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+
+        AddClipboardFormatListener(hwnd).map_err(|e| format!("AddClipboardFormatListener: {e}"))?;
+
+        // Stash the sink on the window so the wndproc can recover it via
+        // GetWindowLongPtrW. We only have one listener, so a thread-local
+        // would also work; using the HWND keeps the API symmetrical.
+        set_user_data(hwnd, ListenerData { sink: sink.clone() });
+
+        let mut msg = MSG::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct ListenerData {
+    sink: Arc<dyn CaptureSink>,
+}
+
+impl Drop for ListenerData {
+    fn drop(&mut self) {
+        log::debug!("clipboard listener window destroyed");
+    }
+}
+
+/// Window procedure. `WM_CLIPBOARDUPDATE` is the only custom message we
+/// handle; everything else is forwarded to `DefWindowProcW`.
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_CLIPBOARDUPDATE => {
+            // Defensive: the user data is set immediately after CreateWindowExW
+            // before the message loop starts, but a malformed subclass could
+            // in principle clear it. Skip the event rather than panicking.
+            if let Some(data) = get_user_data(hwnd) {
+                let foreground = source::current_foreground();
+                if let Some(event) = capture(foreground) {
+                    data.sink.handle(event);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            windows::Win32::UI::WindowsAndMessaging::PostQuitMessage(0);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// Reads every clipboard format we care about and folds them into one event.
+///
+/// Returns `None` when the clipboard carries the sensitive-content flag or
+/// when none of our formats produced any data, both of which mean the change
+/// should be silently dropped.
+fn capture(foreground_hint: isize) -> Option<ClipEvent> {
+    let formats = Formats::register();
+    if formats::is_sensitive(&formats) {
+        return None;
+    }
+
+    let text = formats::read_text();
+    let html = formats::read_html();
+    let rtf = formats::read_rtf();
+    let files = formats::read_files();
+    let image = formats::read_image();
+
+    let (kind, content, content_hash) = if let Some(bytes) = image.as_deref() {
+        let hash = hasher::hash_image(bytes);
+        (ItemKind::Image, String::new(), hash)
+    } else if !files.is_empty() {
+        let display = files
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let hash = hasher::hash_files(&files);
+        (ItemKind::Files, display, hash)
+    } else {
+        let text = text?;
+        let hash = hasher::hash_text(&text);
+        let kind = super::classify(&text);
+        (kind, text, hash)
+    };
+
+    if content_hash.is_empty() {
+        return None;
+    }
+
+    let preview = match kind {
+        ItemKind::Image => {
+            // The actual pixel dimensions are determined later, in the
+            // preview writer, because the bytes have not been decoded yet.
+            "Image".to_string()
+        }
+        ItemKind::Files => {
+            let first = files
+                .first()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string());
+            let more = files.len().saturating_sub(1);
+            match (first, more) {
+                (Some(name), 0) => name,
+                (Some(name), n) => format!("{name} + {n} more"),
+                (None, _) => format!("{} files", files.len()),
+            }
+        }
+        _ => content
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .chars()
+            .take(140)
+            .collect(),
+    };
+
+    let source = source::resolve(Some(foreground_hint));
+
+    let file_strings = files
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+
+    Some(ClipEvent {
+        kind,
+        preview,
+        content,
+        has_html: html.is_some(),
+        has_rtf: rtf.is_some(),
+        image_bytes: image,
+        files: file_strings,
+        size_bytes: 0,
+        source,
+        content_hash,
+    })
+}
+
+// ---- window/user-data plumbing -------------------------------------------
+
+fn to_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Stash per-window data on the GWLP_USERDATA slot.
+fn set_user_data(hwnd: HWND, data: ListenerData) {
+    use windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
+    let boxed = Box::new(data);
+    let raw = Box::into_raw(boxed);
+    unsafe {
+        SetWindowLongPtrW(
+            hwnd,
+            windows::Win32::UI::WindowsAndMessaging::GWLP_USERDATA,
+            raw as isize,
+        );
+    }
+}
+
+fn get_user_data(hwnd: HWND) -> Option<ListenerData> {
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWLP_USERDATA};
+        let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut ListenerData;
+        if raw.is_null() {
+            None
+        } else {
+            Some((*raw).clone())
+        }
+    }
+}

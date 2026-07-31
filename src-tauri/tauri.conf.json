@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Clipdeck",
+  "version": "0.1.0",
+  "identifier": "app.clipdeck.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "macOSPrivateApi": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Clipdeck",
+        "url": "index.html",
+        "width": 760,
+        "height": 480,
+        "minWidth": 520,
+        "minHeight": 360,
+        "center": true,
+        "visible": false,
+        "focus": false,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**"]
+      }
+    },
+    "trayIcon": {
+      "id": "clipdeck-tray",
+      "iconPath": "icons/tray.png",
+      "iconAsTemplate": false,
+      "tooltip": "Clipdeck — clipboard history",
+      "menuOnLeftClick": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "Blazing fast clipboard history for Windows",
+    "longDescription": "Clipdeck keeps everything you copy — text, links, colors, images and files — and puts it one keystroke away. Native Windows 11 look, instant search, zero telemetry.",
+    "copyright": "Copyright © 2026 Clipdeck",
+    "category": "Productivity",
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "allowDowngrades": true,
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": ["English"]
+      }
+    }
+  }
+}

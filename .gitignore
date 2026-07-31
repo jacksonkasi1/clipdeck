@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+src-tauri/target/
+src-tauri/gen/
+
+# Developer-specific cache locations. The Windows build script configures
+# D:\Program at runtime without publishing machine-specific paths.
+.npmrc
+src-tauri/.cargo/config.toml
+
+# Editors and operating-system files
+.idea/
+.vscode/
+.codex/
+.DS_Store
+Thumbs.db
