@@ -101,7 +101,7 @@ jobs:
           -OutputDirectory "artifacts/windows-x64"
 
       - name: Upload tested Windows bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
           path: artifacts/windows-x64/
