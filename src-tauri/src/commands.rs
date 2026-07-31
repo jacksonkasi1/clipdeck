@@ -29,7 +29,7 @@ pub async fn list_items(
     query: ListQuery,
 ) -> Result<Vec<ClipItem>> {
     state.db.list(&query).map_err(|error| {
-        eprintln!("list_items failed: {error}");
+        log::error!("list_items failed: {error}");
         error
     })
 }
@@ -80,7 +80,7 @@ pub async fn copy_to_clipboard(
     flavor: PasteFlavor,
 ) -> Result<()> {
     let item = state.db.get_required(id)?;
-    let rich = state
+    let (_, html, rtf) = state
         .db
         .flavors(id)?
         .ok_or(Error::NotFound("clipboard item"))?;
@@ -88,8 +88,8 @@ pub async fn copy_to_clipboard(
     crate::clipboard::writer::put_back_on_clipboard(
         &item,
         flavor,
-        rich.1.as_deref(),
-        rich.2.as_deref(),
+        html.as_deref(),
+        rtf.as_deref(),
     )?;
     Ok(())
 }
@@ -102,7 +102,7 @@ pub async fn paste_active(
     flavor: PasteFlavor,
 ) -> Result<()> {
     let item = state.db.get_required(id)?;
-    let rich = state
+    let (_, html, rtf) = state
         .db
         .flavors(id)?
         .ok_or(Error::NotFound("clipboard item"))?;
@@ -111,8 +111,8 @@ pub async fn paste_active(
     crate::clipboard::writer::put_back_on_clipboard(
         &item,
         flavor,
-        rich.1.as_deref(),
-        rich.2.as_deref(),
+        html.as_deref(),
+        rtf.as_deref(),
     )?;
 
     let target = *state.foreground.lock();
@@ -250,11 +250,9 @@ pub async fn change_storage_location(
     // are copied. A successful validation makes later rollback safe.
     crate::storage::validate_empty_migration_target(&target)?;
 
-    app.asset_protocol_scope()
-        .allow_directory(&target, true)
-        .map_err(|error| Error::Other(error.to_string()))?;
-    if let Err(error) = crate::storage::copy_managed_storage(&old_root, &target) {
-        revoke_storage_target_scope(&app, &target);
+    crate::storage::copy_managed_storage(&old_root, &target)?;
+    if let Err(error) = allow_storage_target_scope(&app, &target) {
+        rollback_storage_target(&app, &target);
         return Err(error);
     }
     let mut next = state.settings.read().clone();
@@ -265,9 +263,7 @@ pub async fn change_storage_location(
     }
     *state.storage_root.write() = target;
     *state.settings.write() = next.clone();
-    if let Err(error) = app.asset_protocol_scope().forbid_directory(&old_root, true) {
-        log::warn!("old asset scope could not be removed: {error}");
-    }
+    revoke_storage_target_scope(&app, &old_root);
     if let Err(error) = crate::storage::remove_managed_directories(&old_root) {
         log::warn!("old managed storage cleanup was skipped: {error}");
     }
@@ -355,15 +351,29 @@ fn cleanup_asset_paths(storage_root: &std::path::Path, orphans: Vec<String>) {
 }
 
 fn rollback_storage_target(app: &AppHandle, target: &std::path::Path) {
+    revoke_storage_target_scope(app, target);
     if let Err(error) = crate::storage::remove_managed_directories(target) {
         log::warn!("failed storage target cleanup was incomplete: {error}");
     }
-    revoke_storage_target_scope(app, target);
+}
+
+fn allow_storage_target_scope(app: &AppHandle, target: &std::path::Path) -> Result<()> {
+    for managed_root in crate::storage::managed_asset_roots(target) {
+        app.asset_protocol_scope()
+            .allow_directory(managed_root, true)
+            .map_err(|error| Error::Other(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn revoke_storage_target_scope(app: &AppHandle, target: &std::path::Path) {
-    if let Err(error) = app.asset_protocol_scope().forbid_directory(target, true) {
-        log::warn!("failed storage target scope could not be removed: {error}");
+    for managed_root in crate::storage::managed_asset_roots(target) {
+        if let Err(error) = app
+            .asset_protocol_scope()
+            .forbid_directory(managed_root, true)
+        {
+            log::warn!("failed storage target scope could not be removed: {error}");
+        }
     }
 }
 

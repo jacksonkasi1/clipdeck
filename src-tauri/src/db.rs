@@ -605,17 +605,17 @@ CREATE TABLE IF NOT EXISTS settings (
         for (id, image_path, thumb_path, file_assets_json) in rows {
             let image_path = image_path
                 .as_deref()
-                .and_then(|path| migrated_path(path, old_root, new_root));
+                .map(|path| migrated_path(path, old_root, new_root));
             let thumb_path = thumb_path
                 .as_deref()
-                .and_then(|path| migrated_path(path, old_root, new_root));
+                .map(|path| migrated_path(path, old_root, new_root));
             let mut assets = file_assets_json
                 .as_deref()
                 .and_then(|json| serde_json::from_str::<Vec<StoredFile>>(json).ok())
                 .unwrap_or_default();
             for asset in &mut assets {
                 if let Some(stored_path) = asset.stored_path.as_deref() {
-                    asset.stored_path = migrated_path(stored_path, old_root, new_root);
+                    asset.stored_path = Some(migrated_path(stored_path, old_root, new_root));
                 }
             }
             let assets_json = if assets.is_empty() {
@@ -643,12 +643,12 @@ CREATE TABLE IF NOT EXISTS settings (
     }
 }
 
-fn migrated_path(value: &str, old_root: &Path, new_root: &Path) -> Option<String> {
-    let relative = PathBuf::from(value)
-        .strip_prefix(old_root)
-        .ok()?
-        .to_path_buf();
-    Some(new_root.join(relative).to_string_lossy().into_owned())
+fn migrated_path(value: &str, old_root: &Path, new_root: &Path) -> String {
+    let path = PathBuf::from(value);
+    match path.strip_prefix(old_root) {
+        Ok(relative) => new_root.join(relative).to_string_lossy().into_owned(),
+        Err(_) => value.to_string(),
+    }
 }
 
 /// Gathers the image/thumbnail paths for rows matching `filter` so the caller can
@@ -1031,6 +1031,52 @@ mod tests {
         assert_eq!(db.counts().unwrap().total, 1);
         assert_eq!(orphans.len(), 2);
         assert!(orphans.iter().any(|path| path.ends_with("older.png")));
+    }
+
+    #[test]
+    fn storage_migration_rewrites_only_paths_beneath_the_old_root() {
+        let db = Db::open_in_memory().unwrap();
+        let old_root = PathBuf::from("C:/managed-old");
+        let new_root = PathBuf::from("C:/managed-new");
+        let external_thumb = "D:/external/thumb.png";
+        let external_snapshot = "D:/external/archive.txt";
+        let item = NewItem {
+            kind: ItemKind::Image,
+            image: Some(ImageMeta {
+                path: old_root
+                    .join("images/captured.png")
+                    .to_string_lossy()
+                    .into_owned(),
+                thumb_path: external_thumb.into(),
+                width: 1,
+                height: 1,
+            }),
+            file_assets: vec![StoredFile {
+                original_path: "D:/source/archive.txt".into(),
+                stored_path: Some(external_snapshot.into()),
+                size_bytes: 1,
+                is_directory: false,
+                status: crate::models::StoredFileStatus::Ready,
+                message: None,
+            }],
+            content_hash: "migration-paths".into(),
+            ..Default::default()
+        };
+        let id = db.upsert(&item).unwrap().id();
+
+        db.migrate_storage(&old_root, &new_root, &Settings::default())
+            .unwrap();
+
+        let migrated = db.get_required(id).unwrap();
+        assert_eq!(
+            migrated.image.as_ref().unwrap().path,
+            new_root.join("images/captured.png").to_string_lossy()
+        );
+        assert_eq!(migrated.image.as_ref().unwrap().thumb_path, external_thumb);
+        assert_eq!(
+            migrated.file_assets[0].stored_path.as_deref(),
+            Some(external_snapshot)
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@
 use std::fs;
 use std::io;
 use std::path::Component;
+#[cfg(windows)]
+use std::path::Prefix;
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
@@ -21,32 +23,55 @@ pub fn paths_overlap(left: &Path, right: &Path) -> io::Result<bool> {
 }
 
 fn canonical_or_normalized(path: &Path) -> io::Result<PathBuf> {
-    if let Ok(canonical) = fs::canonicalize(path) {
-        return Ok(canonical);
-    }
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !normalized.pop() {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "path escapes its filesystem root",
-                    ));
+    let resolved = match fs::canonicalize(path) {
+        Ok(canonical) => canonical,
+        Err(_) => {
+            let absolute = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            let mut normalized = PathBuf::new();
+            for component in absolute.components() {
+                match component {
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        if !normalized.pop() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidInput,
+                                "path escapes its filesystem root",
+                            ));
+                        }
+                    }
+                    Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                        normalized.push(component.as_os_str());
+                    }
                 }
             }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
+            normalized
         }
-    }
-    Ok(normalized)
+    };
+    Ok(strip_windows_verbatim_prefix(&resolved))
+}
+
+#[cfg(windows)]
+fn strip_windows_verbatim_prefix(path: &Path) -> PathBuf {
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path.to_path_buf();
+    };
+    let mut normalized = match prefix.kind() {
+        Prefix::VerbatimDisk(drive) => PathBuf::from(format!("{}:", char::from(drive))),
+        Prefix::VerbatimUNC(server, share) => PathBuf::from(r"\\").join(server).join(share),
+        _ => return path.to_path_buf(),
+    };
+    normalized.extend(components);
+    normalized
+}
+
+#[cfg(not(windows))]
+fn strip_windows_verbatim_prefix(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn path_starts_with_case_insensitive(path: &Path, base: &Path) -> bool {
@@ -92,6 +117,12 @@ pub fn thumb_root(root: &Path) -> PathBuf {
 
 pub fn file_root(root: &Path) -> PathBuf {
     root.join("files")
+}
+
+/// Directories exposed through Tauri's asset protocol. The storage marker and
+/// any neighboring application data remain outside the webview scope.
+pub fn managed_asset_roots(root: &Path) -> [PathBuf; 3] {
+    [image_root(root), thumb_root(root), file_root(root)]
 }
 
 /// Copies clipboard file/folder inputs into one hash-addressed snapshot group.
@@ -268,14 +299,10 @@ pub fn validate_managed_asset(storage_root: &Path, asset: &Path) -> bool {
     let Ok(asset) = fs::canonicalize(asset) else {
         return false;
     };
-    [
-        image_root(storage_root),
-        thumb_root(storage_root),
-        file_root(storage_root),
-    ]
-    .into_iter()
-    .filter_map(|root| fs::canonicalize(root).ok())
-    .any(|root| asset.starts_with(&root) && asset != root)
+    managed_asset_roots(storage_root)
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .any(|root| asset.starts_with(&root) && asset != root)
 }
 
 pub fn remove_managed_asset(storage_root: &Path, asset: &Path) -> Result<()> {
@@ -474,6 +501,25 @@ mod tests {
         let base = PathBuf::from(r"C:\Users\Person\Clipdeck");
         let nested = PathBuf::from(r"c:\users\person\Clipdeck\files\..\images");
         assert!(paths_overlap(&base, &nested).unwrap());
+    }
+
+    #[test]
+    fn overlap_check_normalizes_canonical_and_fallback_paths_consistently() {
+        let root = test_root("canonical-overlap");
+        fs::create_dir_all(&root).unwrap();
+
+        assert!(paths_overlap(&root, &root.join("not-created")).unwrap());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn overlap_check_strips_windows_verbatim_prefixes() {
+        let normal = PathBuf::from(r"C:\Users\Person\Clipdeck");
+        let verbatim = PathBuf::from(r"\\?\C:\Users\Person\Clipdeck\images");
+
+        assert!(paths_overlap(&normal, &verbatim).unwrap());
     }
 
     #[test]

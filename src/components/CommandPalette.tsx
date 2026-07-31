@@ -39,6 +39,15 @@ const ICONS: Record<string, LucideIcon> = {
   hide: X,
 };
 
+const FOCUSABLE_SELECTOR = [
+  'button:not(:disabled)',
+  '[href]',
+  'input:not(:disabled)',
+  'select:not(:disabled)',
+  'textarea:not(:disabled)',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export function CommandPalette() {
   const visible = useStore((state) => state.showCommands);
   const setVisible = useStore((state) => state.setShowCommands);
@@ -102,10 +111,16 @@ export function CommandPalette() {
         setShowPreview(!showPreview);
         break;
       case 'clear': {
-        const approved = await api.confirm(
-          'Clear all non-favorite history items? Favorites will stay pinned.',
-          'Clear history',
-        );
+        let approved: boolean;
+        try {
+          approved = await api.confirm(
+            'Clear all non-favorite history items? Favorites will stay pinned.',
+            'Clear history',
+          );
+        } catch (error) {
+          console.error('Failed to confirm clearing clipboard history', error);
+          return;
+        }
         if (approved) await clearHistory(false);
         break;
       }
@@ -129,6 +144,24 @@ export function CommandPalette() {
         aria-describedby="command-description"
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
+          if (event.key === 'Tab') {
+            const focusable = Array.from(
+              event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+            ).filter((element) => !element.hasAttribute('hidden'));
+            if (focusable.length === 0) {
+              event.preventDefault();
+              return;
+            }
+
+            const index = focusable.indexOf(document.activeElement as HTMLElement);
+            const nextIndex = event.shiftKey
+              ? (index <= 0 ? focusable.length - 1 : index - 1)
+              : (index < 0 || index === focusable.length - 1 ? 0 : index + 1);
+            event.preventDefault();
+            focusable[nextIndex]?.focus();
+            return;
+          }
+
           if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
           const buttons = Array.from(
             event.currentTarget.querySelectorAll<HTMLButtonElement>('.command-row:not(:disabled)'),
@@ -170,7 +203,11 @@ export function CommandPalette() {
                 className="command-row"
                 key={shortcut.id}
                 disabled={disabled || editDisabled || shortcut.id === 'navigate' || shortcut.id === 'commands'}
-                onClick={() => void run(shortcut.id)}
+                onClick={() => {
+                  void run(shortcut.id).catch((error: unknown) => {
+                    console.error(`Failed to run ${shortcut.id} command`, error);
+                  });
+                }}
               >
                 <span className="command-icon"><Glyph size={17} aria-hidden /></span>
                 <span className="command-copy">

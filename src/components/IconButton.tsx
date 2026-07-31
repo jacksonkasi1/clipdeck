@@ -17,10 +17,16 @@ export function IconButton({
   ...props
 }: IconButtonProps) {
   const isToggle = active !== undefined;
+  const classes = [
+    'icon-button',
+    active ? 'is-active' : '',
+    tone === 'danger' ? 'is-danger' : '',
+    className,
+  ].filter(Boolean).join(' ');
   return (
     <button
       type="button"
-      className={`icon-button ${active ? 'is-active' : ''} ${tone === 'danger' ? 'is-danger' : ''} ${className}`}
+      className={classes}
       aria-label={label}
       aria-pressed={isToggle ? active : undefined}
       title={label}

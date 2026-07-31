@@ -55,6 +55,15 @@ export interface ShortcutKeyEvent {
   metaKey: boolean;
 }
 
+export type ShortcutRecorderKeyAction = 'leave' | 'blur' | 'record';
+
+/** Keeps normal focus traversal outside the shortcut-capture path. */
+export function shortcutRecorderKeyAction(key: string): ShortcutRecorderKeyAction {
+  if (key === 'Tab') return 'leave';
+  if (key === 'Escape') return 'blur';
+  return 'record';
+}
+
 export function shortcutFromKeyEvent(
   event: ShortcutKeyEvent,
   metaLabel: 'Super' | 'Win',

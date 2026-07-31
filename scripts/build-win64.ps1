@@ -34,5 +34,8 @@ try {
 }
 
 $releaseRoot = Join-Path $BuildRoot "$target\release"
+$tauriConfig = Get-Content -Raw (Join-Path $ProjectRoot 'src-tauri\tauri.conf.json') | ConvertFrom-Json
+$installerName = "Clipdeck_$($tauriConfig.version)_x64-setup.exe"
+$installerPath = Join-Path $releaseRoot "bundle\nsis\$installerName"
 Write-Host "Application executable: $(Join-Path $releaseRoot 'clipdeck.exe')"
-Write-Host "Installer: $(Join-Path $releaseRoot 'bundle\nsis\Clipdeck_0.1.0_x64-setup.exe')"
+Write-Host "Installer: $installerPath"

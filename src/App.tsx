@@ -10,6 +10,7 @@ import { Footer } from './components/Footer';
 import { ItemList } from './components/ItemList';
 import { PreviewPane } from './components/PreviewPane';
 import { SearchBar } from './components/SearchBar';
+import { getListKeyboardAction } from './lib/list-navigation';
 import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
@@ -67,22 +68,34 @@ export default function App() {
         setShowCommands(!showCommands);
         return;
       }
-      if (editing) return;
 
       const selectedIndex = items.findIndex((item) => item.id === selectedId);
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const searchHasFocus = target?.matches('input[type="search"]') ?? false;
+      const listAction = (!editing || searchHasFocus)
+        ? getListKeyboardAction(
+            event.key,
+            selectedIndex,
+            items.length,
+            settings?.pasteOnEnter ?? true,
+          )
+        : null;
+      if (listAction) {
         event.preventDefault();
-        const delta = event.key === 'ArrowDown' ? 1 : -1;
-        const next = items[Math.max(0, Math.min(items.length - 1, selectedIndex + delta))];
-        if (next) select(next.id);
-      } else if (event.key === 'Enter' && selectedId) {
-        event.preventDefault();
-        if (settings?.pasteOnEnter ?? true) {
-          void api.pasteActive(selectedId, 'original');
-        } else {
-          void api.copyToClipboard(selectedId, 'original');
+        if (listAction.type === 'select') {
+          const next = items[listAction.index];
+          if (next) select(next.id);
+        } else if (selectedId !== null) {
+          if (listAction.type === 'paste') {
+            void api.pasteActive(selectedId, 'original');
+          } else {
+            void api.copyToClipboard(selectedId, 'original');
+          }
         }
-      } else if (modifier && key === 'c' && selectedId && !window.getSelection()?.toString()) {
+        return;
+      }
+      if (editing) return;
+
+      if (modifier && key === 'c' && selectedId && !window.getSelection()?.toString()) {
         event.preventDefault();
         void api.copyToClipboard(selectedId, 'original');
       } else if (modifier && key === 'e' && selectedId) {
@@ -112,6 +125,8 @@ export default function App() {
           'Clear history',
         ).then((approved) => {
           if (approved) return clearHistory(false);
+        }).catch((error: unknown) => {
+          console.error('Failed to confirm clearing clipboard history', error);
         });
       }
     };

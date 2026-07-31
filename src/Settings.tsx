@@ -4,10 +4,11 @@ import type { Backdrop, ItemKind, Settings as SettingsType, ThemeMode } from './
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
-import { shortcutFromKeyEvent } from './lib/global-shortcut';
+import { shortcutFromKeyEvent, shortcutRecorderKeyAction } from './lib/global-shortcut';
+import { mutationErrorMessage } from './lib/mutation-error';
 
 // ** import lib
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import {
   Database,
   FileImage,
@@ -41,6 +42,9 @@ const HISTORY_KINDS = [
   { key: 'emails', kind: 'email', label: 'Emails', icon: Mail },
 ] as const;
 
+export const SHORTCUT_RECORDER_DESCRIPTION =
+  'Click the field, press the shortcut you want, then press Escape to finish recording.';
+
 export default function Settings() {
   const settings = useStore((state) => state.settings);
   const saveSettings = useStore((state) => state.saveSettings);
@@ -51,7 +55,9 @@ export default function Settings() {
   const changeStorageLocation = useStore((state) => state.changeStorageLocation);
   const [local, setLocal] = useState<SettingsType | null>(settings);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (settings && !local) setLocal(settings);
@@ -65,27 +71,41 @@ export default function Settings() {
 
   const update = <Key extends keyof SettingsType>(key: Key, value: SettingsType[Key]) => {
     setSaved(false);
+    setMutationError(null);
     setLocal({ ...local, [key]: value });
   };
 
   const persist = async () => {
-    await saveSettings(local);
-    setSaved(true);
+    setSaved(false);
+    setMutationError(null);
+    setSaving(true);
+    try {
+      await saveSettings(local);
+      setSaved(true);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Settings could not be saved.', error));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const chooseStorage = async () => {
-    const selected = await api.chooseStorageFolder();
-    if (typeof selected !== 'string') return;
-    const approved = await api.confirm(
-      'Clipdeck will copy and verify managed content before switching locations. Original files are never moved or deleted.',
-      'Change storage location',
-    );
-    if (!approved) return;
-    setStorageBusy(true);
+    setSaved(false);
+    setMutationError(null);
     try {
+      const selected = await api.chooseStorageFolder();
+      if (typeof selected !== 'string') return;
+      const approved = await api.confirm(
+        'Clipdeck will copy and verify managed content before switching locations. Original files are never moved or deleted.',
+        'Change storage location',
+      );
+      if (!approved) return;
+      setStorageBusy(true);
       const next = await changeStorageLocation(selected);
       setLocal(next);
       setSaved(true);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Storage location could not be changed.', error));
     } finally {
       setStorageBusy(false);
     }
@@ -93,21 +113,31 @@ export default function Settings() {
 
   const removeCategory = async (kind: ItemKind, label: string, count: number) => {
     if (count === 0) return;
-    const approved = await api.confirm(
-      `Delete ${count} non-favorite ${label.toLowerCase()} item${count === 1 ? '' : 's'}? Favorites will stay.`,
-      `Clear ${label}`,
-    );
-    if (approved) await clearCategory(kind);
+    setMutationError(null);
+    try {
+      const approved = await api.confirm(
+        `Delete ${count} non-favorite ${label.toLowerCase()} item${count === 1 ? '' : 's'}? Favorites will stay.`,
+        `Clear ${label}`,
+      );
+      if (approved) await clearCategory(kind);
+    } catch (error) {
+      setMutationError(mutationErrorMessage(`${label} history could not be cleared.`, error));
+    }
   };
 
   const removeHistory = async (includeFavorites: boolean) => {
-    const approved = await api.confirm(
-      includeFavorites
-        ? 'Delete every history item, including favorites? This cannot be undone.'
-        : 'Clear all non-favorite history items? Favorites will stay pinned.',
-      includeFavorites ? 'Delete all history' : 'Clear history',
-    );
-    if (approved) await clearHistory(includeFavorites);
+    setMutationError(null);
+    try {
+      const approved = await api.confirm(
+        includeFavorites
+          ? 'Delete every history item, including favorites? This cannot be undone.'
+          : 'Clear all non-favorite history items? Favorites will stay pinned.',
+        includeFavorites ? 'Delete all history' : 'Clear history',
+      );
+      if (approved) await clearHistory(includeFavorites);
+    } catch (error) {
+      setMutationError(mutationErrorMessage('Clipboard history could not be cleared.', error));
+    }
   };
 
   return (
@@ -122,7 +152,7 @@ export default function Settings() {
 
       <div className="settings-scroll">
         <Section title="Appearance" description="Match Windows or choose a fixed theme." icon={<Monitor size={18} />}>
-          <Row label="Theme" description="System is recommended and follows Windows automatically.">
+          <Row id="theme" label="Theme" description="System is recommended and follows Windows automatically.">
             <Segmented<ThemeMode>
               value={local.theme}
               onChange={(value) => update('theme', value)}
@@ -133,7 +163,7 @@ export default function Settings() {
               ]}
             />
           </Row>
-          <Row label="Window material" description="Use a native Windows backdrop when supported.">
+          <Row id="window-material" label="Window material" description="Use a native Windows backdrop when supported.">
             <Segmented<Backdrop>
               value={local.backdrop}
               onChange={(value) => update('backdrop', value)}
@@ -144,22 +174,22 @@ export default function Settings() {
               ]}
             />
           </Row>
-          <Row label="Show preview by default" description="Keep the history compact until you open the preview pane.">
+          <Row id="show-preview" label="Show preview by default" description="Keep the history compact until you open the preview pane.">
             <Toggle checked={local.showPreview} onChange={(value) => update('showPreview', value)} />
           </Row>
         </Section>
 
         <Section title="Capture" description="Choose what Clipdeck remembers locally." icon={<Database size={18} />}>
-          <Row label="Capture images" description="Save image bytes and fast thumbnails in Clipdeck storage.">
+          <Row id="capture-images" label="Capture images" description="Save image bytes and fast thumbnails in Clipdeck storage.">
             <Toggle checked={local.captureImages} onChange={(value) => update('captureImages', value)} />
           </Row>
-          <Row label="Capture files and folders" description="Keep durable local snapshots without blocking clipboard capture.">
+          <Row id="capture-files" label="Capture files and folders" description="Keep durable local snapshots without blocking clipboard capture.">
             <Toggle checked={local.captureFiles} onChange={(value) => update('captureFiles', value)} />
           </Row>
-          <Row label="Store file snapshots" description="Copy files into managed storage so history still works if the original changes.">
+          <Row id="store-file-snapshots" label="Store file snapshots" description="Copy files into managed storage so history still works if the original changes.">
             <Toggle checked={local.storeFileSnapshots} onChange={(value) => update('storeFileSnapshots', value)} />
           </Row>
-          <Row label="Snapshot limit" description="Maximum stored size for one copied file or folder group.">
+          <Row id="snapshot-limit" label="Snapshot limit" description="Maximum stored size for one copied file or folder group.">
             <NumberInput
               value={local.maxSnapshotSizeMb}
               min={1}
@@ -169,7 +199,7 @@ export default function Settings() {
               onChange={(value) => update('maxSnapshotSizeMb', value)}
             />
           </Row>
-          <Row label="Maximum history size" description="Favorites are not removed by normal retention cleanup.">
+          <Row id="maximum-history" label="Maximum history size" description="Favorites are not removed by normal retention cleanup.">
             <NumberInput
               value={local.maxItems}
               min={100}
@@ -178,7 +208,7 @@ export default function Settings() {
               onChange={(value) => update('maxItems', value)}
             />
           </Row>
-          <Row label="Auto-delete after" description="Use 0 days to keep non-favorite entries indefinitely.">
+          <Row id="retention-days" label="Auto-delete after" description="Use 0 days to keep non-favorite entries indefinitely.">
             <NumberInput
               value={local.retentionDays}
               min={0}
@@ -188,28 +218,25 @@ export default function Settings() {
               onChange={(value) => update('retentionDays', value)}
             />
           </Row>
-          <Row label="Paste on Enter" description="Paste the selected item into the previously active app.">
+          <Row id="paste-on-enter" label="Paste on Enter" description="Paste the selected item into the previously active app.">
             <Toggle checked={local.pasteOnEnter} onChange={(value) => update('pasteOnEnter', value)} />
           </Row>
-          <Row label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
+          <Row id="launch-at-login" label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
             <Toggle checked={local.launchAtLogin} onChange={(value) => update('launchAtLogin', value)} />
           </Row>
         </Section>
 
         <Section title="History and storage" description="Review usage and remove only what you choose." icon={<Database size={18} />}>
           <Row
+            id="storage-location"
             label="Managed storage location"
             description="Changing it copies, verifies, switches, then removes only old Clipdeck-managed copies."
           >
-            <button
-              type="button"
-              className="storage-location-button"
-              disabled={storageBusy}
+            <StorageLocationButton
+              busy={storageBusy}
+              path={local.storagePath}
               onClick={() => void chooseStorage()}
-            >
-              <FolderOpen size={16} aria-hidden />
-              <span>{storageBusy ? 'Moving…' : (local.storagePath ?? 'Windows app data (default)')}</span>
-            </button>
+            />
           </Row>
           <div className="history-summary">
             <Metric label="All items" value={counts.total} icon={<Database size={17} />} />
@@ -247,7 +274,11 @@ export default function Settings() {
           description={`${getPlatform() === 'macos' ? 'macOS' : 'Windows'} key labels are used in this build.`}
           icon={<Keyboard size={18} />}
         >
-          <Row label="Open Clipdeck" description="Click the field, then press the global shortcut you want to use.">
+          <Row
+            id="global-hotkey"
+            label="Open Clipdeck"
+            description={SHORTCUT_RECORDER_DESCRIPTION}
+          >
             <ShortcutRecorder value={local.hotkey} onChange={(value) => update('hotkey', value)} />
           </Row>
           <div className="shortcut-reference" aria-label="Keyboard shortcut reference">
@@ -267,11 +298,21 @@ export default function Settings() {
       </div>
 
       <footer className="settings-footer">
-        <span className={saved ? 'save-status is-visible' : 'save-status'} aria-live="polite">
-          Settings saved
+        <span
+          className={`save-status ${saved || mutationError ? 'is-visible' : ''} ${mutationError ? 'is-error' : ''}`}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {mutationError ?? (saved ? 'Settings saved' : '')}
         </span>
-        <button type="button" className="primary-button" onClick={() => void persist()}>
-          <Save size={16} aria-hidden /> Save changes
+        <button
+          type="button"
+          className="primary-button"
+          disabled={saving}
+          onClick={() => void persist()}
+        >
+          <Save size={16} aria-hidden /> {saving ? 'Saving…' : 'Save changes'}
         </button>
       </footer>
     </div>
@@ -311,14 +352,44 @@ function Section({
   );
 }
 
-function Row({ label, description, children }: { label: string; description: string; children: ReactNode }) {
+interface RowAria {
+  labelledBy: string;
+  describedBy: string;
+}
+
+const RowAriaContext = createContext<RowAria | null>(null);
+
+function useRowAria(): RowAria {
+  const aria = useContext(RowAriaContext);
+  if (!aria) throw new Error('Settings controls must be rendered inside a Row');
+  return aria;
+}
+
+export function Row({
+  id,
+  label,
+  description,
+  children,
+}: {
+  id: string;
+  label: string;
+  description: string;
+  children: ReactNode;
+}) {
+  const aria = {
+    labelledBy: `${id}-label`,
+    describedBy: `${id}-description`,
+  };
+
   return (
     <div className="settings-row">
       <div className="settings-row-copy">
-        <strong>{label}</strong>
-        <span>{description}</span>
+        <strong id={aria.labelledBy}>{label}</strong>
+        <span id={aria.describedBy}>{description}</span>
       </div>
-      <div className="settings-row-control">{children}</div>
+      <RowAriaContext.Provider value={aria}>
+        <div className="settings-row-control">{children}</div>
+      </RowAriaContext.Provider>
     </div>
   );
 }
@@ -332,12 +403,40 @@ function Metric({ label, value, icon }: { label: string; value: ReactNode; icon:
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+function StorageLocationButton({
+  busy,
+  path,
+  onClick,
+}: {
+  busy: boolean;
+  path: string | null;
+  onClick: () => void;
+}) {
+  const aria = useRowAria();
+  return (
+    <button
+      type="button"
+      className="storage-location-button"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+      disabled={busy}
+      onClick={onClick}
+    >
+      <FolderOpen size={16} aria-hidden />
+      <span>{busy ? 'Moving…' : (path ?? 'Windows app data (default)')}</span>
+    </button>
+  );
+}
+
+export function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boolean) => void }) {
+  const aria = useRowAria();
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
       className={`toggle ${checked ? 'is-on' : ''}`}
       onClick={() => onChange(!checked)}
     >
@@ -346,7 +445,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (value: boo
   );
 }
 
-function Segmented<Value extends string>({
+export function Segmented<Value extends string>({
   value,
   onChange,
   options,
@@ -355,8 +454,14 @@ function Segmented<Value extends string>({
   onChange: (value: Value) => void;
   options: { value: Value; label: string }[];
 }) {
+  const aria = useRowAria();
   return (
-    <div className="segmented" role="radiogroup">
+    <div
+      className="segmented"
+      role="radiogroup"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+    >
       {options.map((option) => (
         <button
           key={option.value}
@@ -373,7 +478,7 @@ function Segmented<Value extends string>({
   );
 }
 
-function NumberInput({
+export function NumberInput({
   value,
   min,
   max,
@@ -388,10 +493,13 @@ function NumberInput({
   suffix?: string;
   onChange: (value: number) => void;
 }) {
+  const aria = useRowAria();
   return (
     <label className="number-field">
       <input
         type="number"
+        aria-labelledby={aria.labelledBy}
+        aria-describedby={aria.describedBy}
         value={value}
         min={min}
         max={max}
@@ -406,17 +514,22 @@ function NumberInput({
   );
 }
 
-function ShortcutRecorder({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+export function ShortcutRecorder({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const aria = useRowAria();
   const keys = value.split('+').filter(Boolean);
   return (
     <button
       type="button"
       className="shortcut-recorder"
-      title="Click, then press a shortcut"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+      title="Press a shortcut, then press Escape to finish"
       onKeyDown={(event) => {
+        const action = shortcutRecorderKeyAction(event.key);
+        if (action === 'leave') return;
         event.preventDefault();
         event.stopPropagation();
-        if (event.key === 'Escape') {
+        if (action === 'blur') {
           event.currentTarget.blur();
           return;
         }

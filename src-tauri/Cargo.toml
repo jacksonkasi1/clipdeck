@@ -1,6 +1,6 @@
 [package]
 name = "clipdeck"
-version = "0.1.0"
+version = "0.1.1"
 description = "Blazing fast clipboard history for Windows"
 authors = ["Clipdeck"]
 edition = "2021"

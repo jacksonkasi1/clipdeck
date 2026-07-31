@@ -899,7 +899,7 @@ kbd {
     padding-inline: 7px;
   }
 
-  .search-header > .icon-button:nth-last-child(2) {
+  .search-settings-button {
     display: none;
   }
 
@@ -1348,6 +1348,12 @@ kbd {
   filter: brightness(1.06);
 }
 
+.primary-button:disabled {
+  cursor: default;
+  opacity: 0.62;
+  filter: none;
+}
+
 .danger-button {
   color: var(--danger);
   background: var(--danger-soft);
@@ -1369,14 +1375,21 @@ kbd {
 }
 
 .save-status {
+  max-width: min(520px, 65vw);
   color: var(--text-muted);
   font-size: 12px;
+  line-height: 16px;
+  text-align: right;
   opacity: 0;
   transition: opacity var(--transition-fast);
 }
 
 .save-status.is-visible {
   opacity: 1;
+}
+
+.save-status.is-error {
+  color: var(--danger);
 }
 
 .settings-loading {

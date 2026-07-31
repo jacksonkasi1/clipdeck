@@ -15,5 +15,5 @@ export function mergeUniquePage<Item extends { id: number }>(
 }
 
 export function pageMayHaveMore(pageLength: number, pageSize = HISTORY_PAGE_SIZE): boolean {
-  return pageLength === pageSize;
+  return pageLength >= pageSize;
 }

@@ -19,6 +19,7 @@ describe('mergeUniquePage', () => {
 describe('pageMayHaveMore', () => {
   it('keeps paging only when the backend filled the requested page', () => {
     expect(pageMayHaveMore(HISTORY_PAGE_SIZE)).toBe(true);
+    expect(pageMayHaveMore(HISTORY_PAGE_SIZE + 1)).toBe(true);
     expect(pageMayHaveMore(HISTORY_PAGE_SIZE - 1)).toBe(false);
   });
 });

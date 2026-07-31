@@ -9,9 +9,8 @@ export function Footer() {
   const items = useStore((s) => s.items);
   const select = useStore((s) => s.select);
   const pasteOnEnter = useStore((s) => s.settings?.pasteOnEnter ?? true);
-  const item = items.find((i) => i.id === selectedId);
-
   const idx = items.findIndex((i) => i.id === selectedId);
+  const item = idx >= 0 ? items[idx] : undefined;
   const prev = idx > 0 ? items[idx - 1] : undefined;
   const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : undefined;
 
@@ -40,7 +39,7 @@ export function Footer() {
       </div>
       <div className="footer-spacer" />
       <div className="footer-paste">
-        <kbd><CornerDownLeft size={14} aria-hidden /></kbd>
+        <kbd aria-label="Enter"><CornerDownLeft size={14} aria-hidden /></kbd>
         <span>{primaryHint}</span>
       </div>
     </footer>

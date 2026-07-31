@@ -132,8 +132,10 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         db.save_settings(&settings.read())?;
         data_dir.clone()
     };
-    app.asset_protocol_scope()
-        .allow_directory(&storage_path, true)?;
+    for managed_root in storage::managed_asset_roots(&storage_path) {
+        app.asset_protocol_scope()
+            .allow_directory(managed_root, true)?;
+    }
 
     let state = AppState {
         db: Arc::clone(&db),

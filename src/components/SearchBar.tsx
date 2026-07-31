@@ -127,6 +127,7 @@ export function SearchBar() {
         )}
       </IconButton>
       <IconButton
+        className="search-settings-button"
         label={`Settings (${getShortcutLabel('settings')})`}
         onClick={() => void api.openSettingsWindow()}
       >

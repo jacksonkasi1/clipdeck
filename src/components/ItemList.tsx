@@ -5,8 +5,6 @@ import { Clipboard, SearchX } from 'lucide-react';
 
 import { useStore } from '../lib/store';
 import { getShortcutLabel } from '../lib/platform';
-import { getListKeyboardAction } from '../lib/list-navigation';
-import { api } from '../lib/tauri';
 import { ItemRow } from './ItemRow';
 
 export function ItemList() {
@@ -18,8 +16,6 @@ export function ItemList() {
   const loadingMore = useStore((s) => s.loadingMore);
   const hasMore = useStore((s) => s.hasMore);
   const loadMore = useStore((s) => s.loadMore);
-  const pasteOnEnter = useStore((s) => s.settings?.pasteOnEnter ?? true);
-
   const parentRef = useRef<HTMLDivElement>(null);
 
   const virtualizer = useVirtualizer({
@@ -28,22 +24,6 @@ export function ItemList() {
     estimateSize: () => 50,
     overscan: 8,
   });
-
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    const selectedIndex = items.findIndex((item) => item.id === selectedId);
-    const action = getListKeyboardAction(e.key, selectedIndex, items.length, pasteOnEnter);
-    if (!action) return;
-    e.preventDefault();
-
-    if (action.type === 'select') {
-      const next = items[action.index];
-      if (next) select(next.id);
-      return;
-    }
-    if (selectedId === null) return;
-    if (action.type === 'paste') void api.pasteActive(selectedId, 'original');
-    else void api.copyToClipboard(selectedId, 'original');
-  };
 
   useEffect(() => {
     const index = items.findIndex((item) => item.id === selectedId);
@@ -74,7 +54,6 @@ export function ItemList() {
       className="item-list"
       role="listbox"
       tabIndex={0}
-      onKeyDown={onKeyDown}
       aria-label="Clipboard entries"
       aria-busy={loading || loadingMore}
       aria-activedescendant={selectedId !== null ? `clip-item-${selectedId}` : undefined}
