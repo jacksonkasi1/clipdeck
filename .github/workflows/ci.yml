@@ -4,18 +4,16 @@ on:
   push:
     branches:
       - main
-      - "feat/**"
-      - "fix/**"
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # A branch push and the matching pull-request synchronize event must share
-  # one group, otherwise the same expensive Windows release build runs twice.
-  group: windows-ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  group: windows-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
