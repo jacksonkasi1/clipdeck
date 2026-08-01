@@ -114,11 +114,23 @@ export const useStore = create<State & Actions>((set, get) => ({
             ? override
             : fallback;
         // Re-validate the multi-selection against the now-current items.
+        // A filter change (search, kind, favorites) can leave selectedIds
+        // pointing at rows that are no longer visible — drop them so the
+        // range/preview won't lie about what the user has highlighted.
         const validIds = items.map((i) => i.id);
         const nextSelectedIds = s.selectedIds.filter((id) => validIds.includes(id));
         if (nextSelectedId !== null && !nextSelectedIds.includes(nextSelectedId)) {
           nextSelectedIds.unshift(nextSelectedId);
         }
+        // Re-anchor: if the anchor itself was filtered out, fall back to
+        // the first remaining selected id (or just the head of the list),
+        // otherwise Shift+arrow would either collapse selection or pick
+        // up a row that isn't visible.
+        const anchorStillVisible = s.selectionAnchor !== null
+          && validIds.includes(s.selectionAnchor);
+        const nextAnchor = anchorStillVisible
+          ? s.selectionAnchor
+          : (nextSelectedIds[0] ?? nextSelectedId);
         return {
           items,
           counts,
@@ -126,7 +138,7 @@ export const useStore = create<State & Actions>((set, get) => ({
           hasMore: pageMayHaveMore(page.length),
           selectedId: nextSelectedId,
           selectedIds: nextSelectedIds,
-          selectionAnchor: nextSelectedIds.length ? s.selectionAnchor : null,
+          selectionAnchor: nextSelectedIds.length ? nextAnchor : null,
           pendingSelection: null,
         };
       });
@@ -209,23 +221,36 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   selectRange: (id) => {
     const state = get();
-    const anchor = state.selectionAnchor ?? state.selectedId ?? id;
-    const fromIndex = state.items.findIndex((item) => item.id === anchor);
-    const toIndex = state.items.findIndex((item) => item.id === id);
+    const items = state.items;
+    // If the anchor was filtered out between the last selection and
+    // this click, fall back to the current focus or the clicked item
+    // so the shift-range doesn't silently collapse to a single row.
+    const anchorCandidate = state.selectionAnchor ?? state.selectedId ?? id;
+    const fromIndex = items.findIndex((item) => item.id === anchorCandidate);
+    const toIndex = items.findIndex((item) => item.id === id);
     if (fromIndex < 0 || toIndex < 0) {
-      set({ selectedId: id, selectedIds: [id], selectionAnchor: id });
+      const fallback = items.find((item) => item.id === id)
+        ? id
+        : items[0]?.id ?? null;
+      if (fallback === null) {
+        set({ selectedId: null, selectedIds: [], selectionAnchor: null });
+        return;
+      }
+      set({ selectedId: fallback, selectedIds: [fallback], selectionAnchor: fallback });
       return;
     }
     const [start, end] = fromIndex < toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex];
-    const rangeIds = state.items.slice(start, end + 1).map((item) => item.id);
+    const rangeIds = items.slice(start, end + 1).map((item) => item.id);
     set({
       selectedIds: rangeIds,
       selectedId: id,
-      selectionAnchor: anchor,
+      selectionAnchor: anchorCandidate,
     });
   },
 
   selectAll: () => {
+    // Empty list → empty selection. Never preserve a stale selection
+    // when there is nothing to select.
     const ids = get().items.map((item) => item.id);
     set({
       selectedIds: ids,
