@@ -111,7 +111,7 @@ namespace ClipdeckSmoke {
     }
 }
 
-function Get-VisibleWindow([int]$ProcessId, [string]$Title) {
+function Initialize-WindowMethods {
     if (-not ('ClipdeckSmoke.WindowMethods' -as [type])) {
         Add-Type @'
 using System;
@@ -123,6 +123,7 @@ namespace ClipdeckSmoke {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
@@ -130,6 +131,35 @@ namespace ClipdeckSmoke {
 }
 '@
     }
+}
+
+# Prints every visible top-level window owned by the installed build together
+# with its native styles. Packaged style regressions are otherwise invisible in
+# CI, and this also proves which HWND the assertions below inspect.
+function Write-WindowDiagnostics([int]$ProcessId, [string]$Label) {
+    Initialize-WindowMethods
+    Write-Host "--- $Label : visible top-level windows of process $ProcessId ---"
+    $callback = [ClipdeckSmoke.WindowMethods+EnumWindowsProc]{
+        param([IntPtr]$hwnd, [IntPtr]$parameter)
+        $owner = [uint32]0
+        [void][ClipdeckSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+        if ($owner -eq $ProcessId -and [ClipdeckSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
+            $text = New-Object Text.StringBuilder 256
+            [void][ClipdeckSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
+            $class = New-Object Text.StringBuilder 256
+            [void][ClipdeckSmoke.WindowMethods]::GetClassName($hwnd, $class, $class.Capacity)
+            $style = [ClipdeckSmoke.WindowMethods]::GetWindowLong($hwnd, -16)
+            $exStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($hwnd, -20)
+            Write-Host ('  hwnd=0x{0:X} style=0x{1:X8} exStyle=0x{2:X8} class="{3}" title="{4}"' -f [int64]$hwnd, ([uint32]$style), ([uint32]$exStyle), $class.ToString(), $text.ToString())
+        }
+        return $true
+    }
+    [void][ClipdeckSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
+    Write-Host '--- end window diagnostics ---'
+}
+
+function Get-VisibleWindow([int]$ProcessId, [string]$Title) {
+    Initialize-WindowMethods
     $match = [IntPtr]::Zero
     $callback = [ClipdeckSmoke.WindowMethods+EnumWindowsProc]{
         param([IntPtr]$hwnd, [IntPtr]$parameter)
@@ -192,6 +222,7 @@ if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
 $readyFile = Join-Path ([IO.Path]::GetTempPath()) ("clipdeck-ready-" + [guid]::NewGuid() + '.json')
 $quickReadyFile = [IO.Path]::ChangeExtension($readyFile, 'quick.json')
 $quickFocusFile = [IO.Path]::ChangeExtension($readyFile, 'quick-focus.json')
+$quickStyleFile = [IO.Path]::ChangeExtension($readyFile, 'quick-style.json')
 $oldReadyFile = [Environment]::GetEnvironmentVariable('CLIPDECK_READY_FILE', 'Process')
 try {
     # This deliberately exercises a fresh install even when a prior Clipdeck build
@@ -284,6 +315,13 @@ try {
         throw "Quick window is not near its compact 560x620 size: $([Math]::Round($logicalWidth))x$([Math]::Round($logicalHeight)) logical pixels."
     }
 
+    Write-WindowDiagnostics $process.Id 'After quick open'
+    if (Test-Path -LiteralPath $quickStyleFile -PathType Leaf) {
+        Write-Host "Quick style report from the app: $(Get-Content -LiteralPath $quickStyleFile -Raw)"
+    } else {
+        Write-Host "The app did not write a quick style report to $quickStyleFile."
+    }
+
     $quickStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -16)
     $quickExStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -20)
     # WS_CAPTION is the combination WS_BORDER | WS_DLGFRAME. Testing for either
@@ -331,5 +369,5 @@ try {
     [Environment]::SetEnvironmentVariable('CLIPDECK_READY_FILE', $oldReadyFile, 'Process')
     Stop-ClipdeckProcesses
     Invoke-QuietUninstall
-    Remove-Item -LiteralPath $readyFile, $quickReadyFile, $quickFocusFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $readyFile, $quickReadyFile, $quickFocusFile, $quickStyleFile -Force -ErrorAction SilentlyContinue
 }

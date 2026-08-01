@@ -174,14 +174,71 @@ fn show_ready_quick(app: &AppHandle) {
         log::warn!("could not remove quick window from taskbar: {error}");
     }
     #[cfg(windows)]
-    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+    let before = crate::win::window_style::read_styles(&window);
+    #[cfg(windows)]
+    let enforced = crate::win::window_style::enforce_quick_flyout(&window);
+    #[cfg(windows)]
+    if let Err(error) = &enforced {
         log::warn!("could not enforce quick-window Win32 styles: {error}");
     }
     let _ = window.set_always_on_top(true);
     let _ = window.show();
     let _ = window.set_focus();
+    #[cfg(windows)]
+    report_quick_styles(&window, before, enforced);
     // Emitted only after readiness, positioning, material setup, show, and focus.
     let _ = app.emit_to(QUICK_LABEL, "clipdeck:quick-opened", ());
+}
+
+/// Records the native quick-window styles before enforcement, right after
+/// enforcement, and after the window is shown and focused. Windows can restore
+/// non-client chrome during `show`/`focus`, so all three observations are
+/// needed to tell an ineffective enforcement apart from a later revert. The
+/// payload is written only when the packaged smoke test asks for it.
+#[cfg(windows)]
+fn report_quick_styles(
+    window: &WebviewWindow,
+    before: Result<crate::win::window_style::StyleSnapshot, String>,
+    enforced: Result<crate::win::window_style::StyleSnapshot, String>,
+) {
+    let shown = crate::win::window_style::read_styles(window);
+    let describe = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot
+    {
+        Ok(value) => value.to_string(),
+        Err(error) => format!("unavailable: {error}"),
+    };
+    log::info!(
+        "quick window styles: before [{}], enforced [{}], shown [{}]",
+        describe(&before),
+        describe(&enforced),
+        describe(&shown)
+    );
+
+    let Ok(base_path) = std::env::var("CLIPDECK_READY_FILE") else {
+        return;
+    };
+    let field = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot {
+        Ok(value) => serde_json::json!({
+            "hwnd": format!("0x{:X}", value.hwnd),
+            "style": format!("0x{:08X}", value.style as u32),
+            "exStyle": format!("0x{:08X}", value.ex_style as u32),
+        }),
+        Err(error) => serde_json::json!({ "error": error }),
+    };
+    let mut path = std::path::PathBuf::from(base_path);
+    path.set_extension("quick-style.json");
+    let payload = serde_json::json!({
+        "before": field(&before),
+        "enforced": field(&enforced),
+        "shown": field(&shown),
+        "processId": std::process::id(),
+    });
+    if let Err(error) = serde_json::to_vec(&payload)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| std::fs::write(&path, bytes).map_err(|error| error.to_string()))
+    {
+        log::warn!("could not write quick-window style diagnostics: {error}");
+    }
 }
 
 pub fn hide_quick(app: &AppHandle) {
