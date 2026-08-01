@@ -610,7 +610,7 @@ impl CaptureSink for TauriSink {
         log::debug!("capture_filter kind={:?}", event.kind);
         if event.kind == ItemKind::Files {
             let original_files = event.files.clone();
-            let configured = match settings.file_filter_mode {
+            let configured: &[String] = match settings.file_filter_mode {
                 crate::models::FileFilterMode::Include => &settings.file_include_extensions,
                 crate::models::FileFilterMode::Exclude => &settings.file_exclude_extensions,
                 crate::models::FileFilterMode::All => &[],

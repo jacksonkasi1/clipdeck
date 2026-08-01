@@ -111,7 +111,7 @@ mod suppression_tests {
 pub fn read_snapshot(formats: &Formats) -> Option<ClipboardSnapshot> {
     let raw = with_clipboard(|| {
         let internal_write = formats.internal_write != 0
-            && IsClipboardFormatAvailable(formats.internal_write).as_bool();
+            && IsClipboardFormatAvailable(formats.internal_write).is_ok();
         if should_suppress_snapshot(is_sensitive_open(formats), internal_write) {
             return None;
         }
