@@ -21,6 +21,13 @@ const COLOR_ITEM: ClipItem = {
   source: null,
   favorite: false,
   copyCount: 1,
+  device: {
+    id: 'local',
+    name: 'This device',
+    platform: 'windows',
+    color: '#28b7e8',
+  },
+  syncStatus: 'local',
   firstCopiedAt: 1,
   lastCopiedAt: 1,
 };

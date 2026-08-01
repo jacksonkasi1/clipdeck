@@ -4,6 +4,7 @@ import type { ClipItem } from '../lib/types';
 // ** import lib
 import { Star } from 'lucide-react';
 
+import { DeviceBadge } from './DeviceBadge';
 import { KindIcon } from './KindIcon';
 import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
@@ -42,6 +43,7 @@ export function ItemRow({ item, selected, position, total, onSelect }: Props) {
         </div>
         <div className="row-subtitle">
           <span>{item.source?.name ?? kindLabel(item.kind)}</span>
+          <DeviceBadge device={item.device} status={item.syncStatus} compact />
           {item.copyCount > 1 && <span>Copied {item.copyCount} times</span>}
         </div>
       </div>

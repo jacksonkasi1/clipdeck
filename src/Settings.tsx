@@ -23,10 +23,13 @@ import {
   Save,
   Settings2,
   Star,
+  RefreshCw,
   Trash2,
   Type,
+  Wifi,
 } from 'lucide-react';
 
+import { DeviceBadge } from './components/DeviceBadge';
 import { useStore } from './lib/store';
 import { api } from './lib/tauri';
 import { getPlatform } from './lib/platform';
@@ -50,9 +53,11 @@ export default function Settings() {
   const saveSettings = useStore((state) => state.saveSettings);
   const appearance = useStore((state) => state.appearance);
   const counts = useStore((state) => state.counts);
+  const sync = useStore((state) => state.sync);
   const clearHistory = useStore((state) => state.clearHistory);
   const clearCategory = useStore((state) => state.clearCategory);
   const changeStorageLocation = useStore((state) => state.changeStorageLocation);
+  const regeneratePairingCode = useStore((state) => state.regeneratePairingCode);
   const [local, setLocal] = useState<SettingsType | null>(settings);
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -266,6 +271,44 @@ export default function Settings() {
             <button type="button" className="danger-button" onClick={() => void removeHistory(true)}>
               <Trash2 size={16} aria-hidden /> Delete all history
             </button>
+          </div>
+        </Section>
+
+        <Section title="Cross-device sync" description="Pair trusted devices on the same local network." icon={<Wifi size={18} />}>
+          <Row id="sync-enabled" label="LAN sync" description="Discover paired Clipdeck devices and exchange text-like clipboard entries.">
+            <Toggle checked={local.syncEnabled} onChange={(value) => update('syncEnabled', value)} />
+          </Row>
+          <Row id="sync-device-name" label="Device name" description="Shown beside history items copied from this device.">
+            <TextInput
+              value={local.syncDeviceName}
+              onChange={(value) => update('syncDeviceName', value)}
+            />
+          </Row>
+          <Row id="sync-device-color" label="Device color" description="Used as a quick visual identifier in the history list.">
+            <ColorInput
+              value={local.syncDeviceColor}
+              onChange={(value) => update('syncDeviceColor', value)}
+            />
+          </Row>
+          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync.">
+            <button
+              type="button"
+              className="pairing-code-button"
+              onClick={() => void regeneratePairingCode()}
+              title="Generate a new pairing code"
+            >
+              <span>{local.syncPairingCode}</span>
+              <RefreshCw size={15} aria-hidden />
+            </button>
+          </Row>
+          <div className="peer-list" aria-label="Discovered sync devices">
+            {(sync?.peers.length ?? 0) === 0 ? (
+              <span className="peer-empty">No paired devices discovered yet</span>
+            ) : (
+              sync?.peers.map((peer) => (
+                <DeviceBadge key={peer.device.id} device={peer.device} status={peer.status} />
+              ))
+            )}
           </div>
         </Section>
 
@@ -510,6 +553,37 @@ export function NumberInput({
         }}
       />
       {suffix && <span>{suffix}</span>}
+    </label>
+  );
+}
+
+function TextInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const aria = useRowAria();
+  return (
+    <input
+      className="text-field"
+      type="text"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+      value={value}
+      maxLength={64}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const aria = useRowAria();
+  return (
+    <label className="color-field">
+      <input
+        type="color"
+        aria-labelledby={aria.labelledBy}
+        aria-describedby={aria.describedBy}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <span>{value}</span>
     </label>
   );
 }

@@ -8,6 +8,7 @@ import type {
   ListQuery,
   PasteFlavor,
   Settings,
+  SyncState,
   SystemAppearance,
 } from './types';
 
@@ -49,6 +50,8 @@ export const api = {
   hideWindow: () => invoke<void>('hide_window'),
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
   setPreviewVisible: (value: boolean) => invoke<boolean>('set_preview_visible', { value }),
+  syncState: () => invoke<SyncState>('sync_state'),
+  regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   quitApp: () => invoke<void>('quit_app'),
   chooseStorageFolder: () => open({ directory: true, multiple: false }),
   confirm: (message: string, title = 'Clipdeck') =>

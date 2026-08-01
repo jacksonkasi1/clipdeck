@@ -34,6 +34,30 @@ export interface SourceApp {
   iconPath: string | null;
 }
 
+export type PlatformKind = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'unknown';
+
+export type SyncStatus = 'local' | 'synced' | 'pending' | 'offline';
+
+export interface DeviceIdentity {
+  id: string;
+  name: string;
+  platform: PlatformKind;
+  color: string;
+}
+
+export interface SyncPeer {
+  device: DeviceIdentity;
+  lastSeenAt: number;
+  status: SyncStatus;
+}
+
+export interface SyncState {
+  enabled: boolean;
+  device: DeviceIdentity;
+  pairingCode: string;
+  peers: SyncPeer[];
+}
+
 export interface ClipItem {
   id: number;
   kind: ItemKind;
@@ -48,6 +72,8 @@ export interface ClipItem {
   source: SourceApp | null;
   favorite: boolean;
   copyCount: number;
+  device: DeviceIdentity;
+  syncStatus: SyncStatus;
   firstCopiedAt: number;
   lastCopiedAt: number;
 }
@@ -97,6 +123,11 @@ export interface Settings {
   pasteOnEnter: boolean;
   launchAtLogin: boolean;
   showPreview: boolean;
+  syncEnabled: boolean;
+  syncDeviceId: string;
+  syncDeviceName: string;
+  syncDeviceColor: string;
+  syncPairingCode: string;
 }
 
 export interface SystemAppearance {

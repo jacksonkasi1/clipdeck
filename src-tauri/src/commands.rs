@@ -16,7 +16,7 @@ use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
     ClipItem, Counts, ImageMeta, ItemKind, ListQuery, PasteFlavor, Settings, StoredFile,
-    StoredFileStatus, SystemAppearance,
+    StoredFileStatus, SyncState, SystemAppearance,
 };
 use crate::win::paste;
 use crate::AppState;
@@ -334,6 +334,30 @@ pub async fn set_preview_visible(window: tauri::WebviewWindow, value: bool) -> R
 }
 
 #[tauri::command]
+pub async fn sync_state(state: tauri::State<'_, AppState>) -> Result<SyncState> {
+    let settings = state.settings.read().clone();
+    Ok(state.sync.state(&settings))
+}
+
+#[tauri::command]
+pub async fn regenerate_pairing_code(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Settings> {
+    let mut next = state.settings.read().clone();
+    next.sync_pairing_code = format!(
+        "{:06}",
+        (crate::models::now_ms().unsigned_abs() ^ u64::from(std::process::id())) % 1_000_000
+    );
+    state.db.save_settings(&next)?;
+    *state.settings.write() = next.clone();
+    apply_runtime_settings(&app, &next)?;
+    let _ = app.emit("settings-updated", &next);
+    let _ = app.emit("sync-peers-updated", ());
+    Ok(next)
+}
+
+#[tauri::command]
 pub async fn quit_app(app: AppHandle) -> Result<()> {
     app.exit(0);
     Ok(())
@@ -487,6 +511,7 @@ pub fn install_clipboard_listener(app: &App) -> Result<()> {
         storage_root: Arc::clone(&state.storage_root),
         storage_operation: Arc::clone(&state.storage_operation),
         settings: Arc::clone(&state.settings),
+        sync: state.sync.clone(),
         snapshot_tx,
     });
     listener::start_listener(sink).map_err(|e| Error::Other(format!("listener start failed: {e}")))
@@ -499,6 +524,7 @@ struct TauriSink {
     storage_root: Arc<parking_lot::RwLock<PathBuf>>,
     storage_operation: Arc<parking_lot::RwLock<()>>,
     settings: Arc<parking_lot::RwLock<Settings>>,
+    sync: crate::sync::SyncService,
     snapshot_tx: mpsc::SyncSender<SnapshotJob>,
 }
 
@@ -536,6 +562,7 @@ impl CaptureSink for TauriSink {
                 }
                 if is_new {
                     let _ = self.app.emit("clip-updated", &item);
+                    self.sync.enqueue_item(&item);
                 } else {
                     let _ = self.app.emit("clip-touched", &event.content_hash);
                 }
@@ -686,6 +713,8 @@ fn persist(
         size_bytes,
         content_hash: event.content_hash.clone(),
         source: event.source.clone(),
+        device: None,
+        sync_status: crate::models::SyncStatus::Local,
     };
 
     let upsert = db.upsert(&new)?;

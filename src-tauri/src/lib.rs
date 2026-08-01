@@ -23,6 +23,7 @@ pub mod hotkey;
 pub mod models;
 pub mod native_appearance;
 pub mod storage;
+pub mod sync;
 #[cfg(not(test))]
 pub mod tray;
 #[cfg(not(test))]
@@ -37,6 +38,7 @@ pub struct AppState {
     pub storage_root: Arc<parking_lot::RwLock<PathBuf>>,
     pub storage_operation: Arc<parking_lot::RwLock<()>>,
     pub settings: Arc<parking_lot::RwLock<models::Settings>>,
+    pub sync: sync::SyncService,
     pub active_hotkey: parking_lot::Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>,
     pub foreground: parking_lot::Mutex<isize>,
 }
@@ -78,6 +80,8 @@ pub fn run() {
             commands::hide_window,
             commands::set_always_on_top,
             commands::set_preview_visible,
+            commands::sync_state,
+            commands::regenerate_pairing_code,
             commands::quit_app,
             native_appearance::sync_native_appearance,
         ])
@@ -137,11 +141,23 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             .allow_directory(managed_root, true)?;
     }
 
+    let sync = match sync::SyncService::start(
+        app.handle().clone(),
+        Arc::clone(&db),
+        Arc::clone(&settings),
+    ) {
+        Ok(service) => service,
+        Err(error) => {
+            log::warn!("LAN sync could not start: {error}");
+            sync::SyncService::inactive()
+        }
+    };
     let state = AppState {
         db: Arc::clone(&db),
         storage_root: Arc::new(parking_lot::RwLock::new(storage_path)),
         storage_operation: Arc::new(parking_lot::RwLock::new(())),
         settings: Arc::clone(&settings),
+        sync,
         active_hotkey: parking_lot::Mutex::new(None),
         foreground: parking_lot::Mutex::new(0),
     };

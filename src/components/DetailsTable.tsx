@@ -1,6 +1,7 @@
 // ** import lib
 import { AppWindow } from 'lucide-react';
 
+import { DeviceBadge } from './DeviceBadge';
 import { formatBytes } from '../lib/formatting';
 import { useStore } from '../lib/store';
 
@@ -32,6 +33,8 @@ export function DetailsTable() {
           value={<span className="source-value"><AppWindow size={15} aria-hidden />{app}</span>}
         />
         <Row label="Type" value={kind} />
+        <Row label="Device" value={<DeviceBadge device={item.device} status={item.syncStatus} />} />
+        <Row label="Sync status" value={syncLabel(item.syncStatus)} />
         <Row label="Number of copies" value={String(item.copyCount)} />
         <Row label="First copy time" value={formatDate(item.firstCopiedAt)} />
         <Row label="Last copy time" value={formatDate(item.lastCopiedAt)} />
@@ -45,6 +48,13 @@ export function DetailsTable() {
       </dl>
     </section>
   );
+}
+
+function syncLabel(status: string): string {
+  if (status === 'synced') return 'Synced';
+  if (status === 'pending') return 'Pending';
+  if (status === 'offline') return 'Offline';
+  return 'Local';
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {

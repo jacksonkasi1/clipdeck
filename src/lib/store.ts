@@ -1,5 +1,5 @@
 // ** import types
-import type { ClipItem, Counts, ItemKind, ListQuery, Settings, SystemAppearance } from './types';
+import type { ClipItem, Counts, ItemKind, ListQuery, Settings, SyncState, SystemAppearance } from './types';
 
 // ** import lib
 import { create } from 'zustand';
@@ -15,6 +15,7 @@ interface State {
   favoritesOnly: boolean;
   counts: Counts;
   settings: Settings | null;
+  sync: SyncState | null;
   appearance: SystemAppearance | null;
   showPreview: boolean;
   showDetails: boolean;
@@ -38,7 +39,9 @@ interface Actions {
   clearHistory: (includeFavorites: boolean) => Promise<void>;
   clearCategory: (kind: ItemKind, includeFavorites?: boolean) => Promise<void>;
   loadSettings: () => Promise<void>;
+  loadSyncState: () => Promise<void>;
   saveSettings: (settings: Settings) => Promise<void>;
+  regeneratePairingCode: () => Promise<void>;
   changeStorageLocation: (path: string) => Promise<Settings>;
   setShowPreview: (show: boolean) => void;
   setShowDetails: (show: boolean) => void;
@@ -67,6 +70,7 @@ export const useStore = create<State & Actions>((set, get) => ({
     storageBytes: 0,
   },
   settings: null,
+  sync: null,
   appearance: null,
   showPreview: false,
   showDetails: true,
@@ -169,9 +173,21 @@ export const useStore = create<State & Actions>((set, get) => ({
     set({ settings, showPreview: settings.showPreview });
   },
 
+  loadSyncState: async () => {
+    const sync = await api.syncState();
+    set({ sync });
+  },
+
   saveSettings: async (settings) => {
     const next = await api.saveSettings(settings);
     set({ settings: next, showPreview: next.showPreview });
+    await get().loadSyncState();
+  },
+
+  regeneratePairingCode: async () => {
+    const next = await api.regeneratePairingCode();
+    set({ settings: next });
+    await get().loadSyncState();
   },
 
   changeStorageLocation: async (path) => {
@@ -214,6 +230,9 @@ export async function bootStore() {
     on<Settings>('settings-updated', (settings) => {
       useStore.setState({ settings, showPreview: settings.showPreview });
     }),
+    on<void>('sync-peers-updated', () => {
+      void useStore.getState().loadSyncState();
+    }),
     on<SystemAppearance>('appearance-changed', (appearance) => {
       useStore.getState().applyAppearance(appearance);
     }),
@@ -230,6 +249,7 @@ export async function bootStore() {
   await Promise.allSettled([
     refresh(),
     useStore.getState().loadSettings(),
+    useStore.getState().loadSyncState(),
     syncAppearance(),
   ]);
   window.addEventListener('focus', () => void syncAppearance());
