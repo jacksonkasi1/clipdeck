@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 // ** import lib
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,6 +8,7 @@ const apiMock = vi.hoisted(() => ({
   listItems: vi.fn(async () => []),
   counts: vi.fn(async () => ({ all: 0, text: 0, link: 0, email: 0, color: 0, image: 0, files: 0, favorites: 0 })),
   hideWindow: vi.fn(async () => undefined),
+  signalQuickSearchFocused: vi.fn(async () => undefined),
   setAlwaysOnTop: vi.fn(async () => undefined),
   setQuickPinned: vi.fn(async () => undefined),
   openSettingsWindow: vi.fn(async () => undefined),
@@ -58,6 +59,18 @@ describe('SearchBar header', () => {
     expect(screen.queryByRole('button', { name: /settings/i })).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /preview pane/i })).toBeTruthy();
+  });
+
+  it('refocuses and confirms the quick search when the native window gains focus', async () => {
+    setMode('quick');
+    render(<SearchBar />);
+    const input = screen.getByRole('searchbox', { name: /search clipboard history/i });
+    input.blur();
+
+    fireEvent.focus(window);
+
+    expect(document.activeElement).toBe(input);
+    await waitFor(() => expect(apiMock.signalQuickSearchFocused).toHaveBeenCalledTimes(1));
   });
 
   it('exposes the full application actions while search is idle', () => {

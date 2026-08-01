@@ -43,10 +43,6 @@ export default function App() {
   // The shell is visible by default. This class only restarts a bounded inner
   // animation after Rust confirms the already-rendered quick window was shown.
   const [quickEntering, setQuickEntering] = useState(false);
-  // Native must not reveal the quick window until this webview has finished
-  // subscribing. Tauri event registration is asynchronous; DOM readiness alone
-  // can otherwise race ahead and lose the first `quick-opened` focus request.
-  const [quickOpenListenerReady, setQuickOpenListenerReady] = useState(mode !== 'quick');
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
@@ -67,22 +63,10 @@ export default function App() {
       fallback = window.setTimeout(() => setQuickEntering(false), 180);
       window.dispatchEvent(new CustomEvent('clipdeck:focus-search'));
     };
-    let disposed = false;
-    let removeListener: (() => void) | undefined;
-    void on<void>('clipdeck:quick-opened', replayOpen).then((fn) => {
-      if (disposed) {
-        fn();
-        return;
-      }
-      removeListener = fn;
-      setQuickOpenListenerReady(true);
-    }).catch((error: unknown) => {
-      console.error('Failed to listen for quick window opening', error);
-    });
+    const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
     return () => {
-      disposed = true;
       window.clearTimeout(fallback);
-      removeListener?.();
+      void unlisten.then((fn) => fn());
     };
   }, [mode]);
 
@@ -225,7 +209,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!bootstrapped || !quickOpenListenerReady || readinessSignaled) return;
+    if (!bootstrapped || readinessSignaled) return;
     const search = document.querySelector<HTMLInputElement>('.search-header input[type="search"]');
     const layout = document.querySelector<HTMLElement>('.history-pane');
     const searchVisible = Boolean(search && search.getBoundingClientRect().height > 0);
@@ -237,7 +221,7 @@ export default function App() {
       readinessSignaled = false;
       console.error(`Failed to signal ${mode} frontend readiness`, error);
     });
-  }, [bootstrapped, mode, quickOpenListenerReady]);
+  }, [bootstrapped, mode]);
 
   const frameClasses = [
     'app-frame',

@@ -100,7 +100,14 @@ export function SearchBar() {
       }
     };
     window.addEventListener('clipdeck:focus-search', focusSearch);
-    return () => window.removeEventListener('clipdeck:focus-search', focusSearch);
+    // A hidden warm WebView can miss the native quick-open event while its event
+    // subscription is still settling. Native window focus is an independent,
+    // browser-level fallback that fires after the flyout is actually visible.
+    if (mode === 'quick') window.addEventListener('focus', focusSearch);
+    return () => {
+      window.removeEventListener('clipdeck:focus-search', focusSearch);
+      window.removeEventListener('focus', focusSearch);
+    };
   }, [mode]);
 
   // The header *is* the search field, so a click anywhere in its empty area
