@@ -1,6 +1,8 @@
 // ** import lib
-import { AppWindow } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AppWindow, Plus, Tag, X } from 'lucide-react';
 
+import { DeviceBadge } from './DeviceBadge';
 import { formatBytes } from '../lib/formatting';
 import { useStore } from '../lib/store';
 
@@ -16,6 +18,7 @@ const KIND_LABEL: Record<string, string> = {
 export function DetailsTable() {
   const selectedId = useStore((s) => s.selectedId);
   const items = useStore((s) => s.items);
+  const setItemTags = useStore((s) => s.setItemTags);
   const item = items.find((i) => i.id === selectedId);
 
   if (!item) return null;
@@ -32,6 +35,8 @@ export function DetailsTable() {
           value={<span className="source-value"><AppWindow size={15} aria-hidden />{app}</span>}
         />
         <Row label="Type" value={kind} />
+        <Row label="Device" value={<DeviceBadge device={item.device} status={item.syncStatus} />} />
+        <Row label="Sync status" value={syncLabel(item.syncStatus)} />
         <Row label="Number of copies" value={String(item.copyCount)} />
         <Row label="First copy time" value={formatDate(item.firstCopiedAt)} />
         <Row label="Last copy time" value={formatDate(item.lastCopiedAt)} />
@@ -42,9 +47,43 @@ export function DetailsTable() {
           />
         )}
         {item.sizeBytes > 0 && <Row label="Size" value={size} />}
+        <Row label="Tags" value={<TagEditor itemId={item.id} tags={item.tags} onSave={setItemTags} />} />
       </dl>
     </section>
   );
+}
+
+function TagEditor({ itemId, tags, onSave }: { itemId: number; tags: string[]; onSave: (id: number, tags: string[]) => Promise<void> }) {
+  const [value, setValue] = useState('');
+  useEffect(() => setValue(''), [itemId]);
+  const add = () => {
+    const next = value.trim().replace(/^#/, '').toLowerCase();
+    if (!next || tags.includes(next)) return;
+    setValue('');
+    void onSave(itemId, [...tags, next]);
+  };
+  return (
+    <div className="tag-editor">
+      <div className="tag-list">
+        {tags.map((tag) => (
+          <button key={tag} type="button" className="tag-chip" title={`Remove #${tag}`} onClick={() => void onSave(itemId, tags.filter((value) => value !== tag))}>
+            <Tag size={12} aria-hidden /> {tag} <X size={11} aria-hidden />
+          </button>
+        ))}
+      </div>
+      <div className="tag-input-wrap">
+        <input value={value} maxLength={32} placeholder="Add tag" aria-label="Add tag" onChange={(event) => setValue(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); add(); } }} />
+        <button type="button" aria-label="Add tag" disabled={!value.trim()} onClick={add}><Plus size={13} aria-hidden /></button>
+      </div>
+    </div>
+  );
+}
+
+function syncLabel(status: string): string {
+  if (status === 'synced') return 'Synced';
+  if (status === 'pending') return 'Pending';
+  if (status === 'offline') return 'Offline';
+  return 'Local';
 }
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {

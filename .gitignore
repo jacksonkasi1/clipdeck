@@ -16,3 +16,4 @@ src-tauri/.cargo/config.toml
 .codex/
 .DS_Store
 Thumbs.db
+*.stackdump

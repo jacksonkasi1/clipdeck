@@ -18,10 +18,15 @@ with a Fluent 2 surface that reads as a native part of Windows 11.
   counter; the list never fills with duplicates.
 - **Full-text search** — SQLite FTS5 prefix search across the visible text,
   ranked as-you-type and loaded incrementally for large histories.
+- **Tags and source search** — label entries locally and search by clipboard content,
+  tag, application name, or executable path from the same search box.
 - **Complete history controls** — edit supported values, pin favorites, delete
   individual entries, clear a type, or clear every non-favorite entry.
 - **Managed local storage** — durable image and file snapshots with configurable
   location, retention, size limits, and safe verified migration.
+- **Capture controls** — choose ignored applications, keep separate include and
+  exclude extension lists, cap snapshot size, and store images as copied, PNG,
+  JPEG, or WebP with normal, best, or manual compression.
 - **Fluent 2 / Windows 11 visuals** — Segoe UI Variable with the `opsz`
   optical-size axis, 8 px overlay / 4 px control radii, Mica or Acrylic
   backdrop from `window-vibrancy`, OS accent color injected from the

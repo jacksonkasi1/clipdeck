@@ -8,6 +8,10 @@ export type PasteFlavor = 'original' | 'plainText';
 
 export type Backdrop = 'acrylic' | 'mica' | 'solid';
 
+export type FileFilterMode = 'all' | 'include' | 'exclude';
+export type ImageFormat = 'original' | 'png' | 'jpeg' | 'webp';
+export type ImageCompression = 'none' | 'normal' | 'best' | 'manual';
+
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface ImageMeta {
@@ -34,6 +38,30 @@ export interface SourceApp {
   iconPath: string | null;
 }
 
+export type PlatformKind = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'unknown';
+
+export type SyncStatus = 'local' | 'synced' | 'pending' | 'offline';
+
+export interface DeviceIdentity {
+  id: string;
+  name: string;
+  platform: PlatformKind;
+  color: string;
+}
+
+export interface SyncPeer {
+  device: DeviceIdentity;
+  lastSeenAt: number;
+  status: SyncStatus;
+}
+
+export interface SyncState {
+  enabled: boolean;
+  device: DeviceIdentity;
+  pairingCode: string;
+  peers: SyncPeer[];
+}
+
 export interface ClipItem {
   id: number;
   kind: ItemKind;
@@ -45,9 +73,12 @@ export interface ClipItem {
   files: string[];
   fileAssets: StoredFile[];
   sizeBytes: number;
+  tags: string[];
   source: SourceApp | null;
   favorite: boolean;
   copyCount: number;
+  device: DeviceIdentity;
+  syncStatus: SyncStatus;
   firstCopiedAt: number;
   lastCopiedAt: number;
 }
@@ -90,6 +121,12 @@ export interface Settings {
   captureFiles: boolean;
   storeFileSnapshots: boolean;
   maxSnapshotSizeMb: number;
+  fileFilterMode: FileFilterMode;
+  fileIncludeExtensions: string[];
+  fileExcludeExtensions: string[];
+  imageFormat: ImageFormat;
+  imageCompression: ImageCompression;
+  imageQuality: number;
   storagePath: string | null;
   ignoredApps: string[];
   backdrop: Backdrop;
@@ -97,6 +134,11 @@ export interface Settings {
   pasteOnEnter: boolean;
   launchAtLogin: boolean;
   showPreview: boolean;
+  syncEnabled: boolean;
+  syncDeviceId: string;
+  syncDeviceName: string;
+  syncDeviceColor: string;
+  syncPairingCode: string;
 }
 
 export interface SystemAppearance {

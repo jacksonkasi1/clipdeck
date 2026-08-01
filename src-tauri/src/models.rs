@@ -94,6 +94,114 @@ pub struct SourceApp {
     pub icon_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlatformKind {
+    #[default]
+    Windows,
+    Macos,
+    Linux,
+    Android,
+    Ios,
+    Unknown,
+}
+
+impl PlatformKind {
+    pub fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::Windows
+        } else if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
+        } else if cfg!(target_os = "android") {
+            Self::Android
+        } else if cfg!(target_os = "ios") {
+            Self::Ios
+        } else {
+            Self::Unknown
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Macos => "macos",
+            Self::Linux => "linux",
+            Self::Android => "android",
+            Self::Ios => "ios",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_db_value(value: &str) -> Self {
+        match value {
+            "windows" => Self::Windows,
+            "macos" => Self::Macos,
+            "linux" => Self::Linux,
+            "android" => Self::Android,
+            "ios" => Self::Ios,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceIdentity {
+    pub id: String,
+    pub name: String,
+    pub platform: PlatformKind,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncStatus {
+    #[default]
+    Local,
+    Synced,
+    Pending,
+    Offline,
+}
+
+impl SyncStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Synced => "synced",
+            Self::Pending => "pending",
+            Self::Offline => "offline",
+        }
+    }
+
+    pub fn from_db_value(value: &str) -> Self {
+        match value {
+            "synced" => Self::Synced,
+            "pending" => Self::Pending,
+            "offline" => Self::Offline,
+            _ => Self::Local,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPeer {
+    pub device: DeviceIdentity,
+    pub last_seen_at: i64,
+    pub status: SyncStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncState {
+    pub enabled: bool,
+    pub device: DeviceIdentity,
+    pub pairing_code: String,
+    pub peers: Vec<SyncPeer>,
+}
+
 /// A single clipboard history entry as sent to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,8 +221,13 @@ pub struct ClipItem {
     pub file_assets: Vec<StoredFile>,
     pub size_bytes: i64,
     pub source: Option<SourceApp>,
+    /// User-defined local labels used for organization and search.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub favorite: bool,
     pub copy_count: i64,
+    pub device: DeviceIdentity,
+    pub sync_status: SyncStatus,
     /// Unix milliseconds.
     pub first_copied_at: i64,
     /// Unix milliseconds.
@@ -151,6 +264,52 @@ pub enum PasteFlavor {
     PlainText,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileFilterMode {
+    #[default]
+    All,
+    Include,
+    Exclude,
+}
+
+fn default_included_extensions() -> Vec<String> {
+    [".txt", ".pdf"].into_iter().map(str::to_string).collect()
+}
+
+fn default_excluded_extensions() -> Vec<String> {
+    [
+        ".exe", ".bat", ".cmd", ".msi", ".scr", ".com", ".dll", ".sys",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFormat {
+    #[default]
+    Original,
+    Png,
+    Jpeg,
+    Webp,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageCompression {
+    None,
+    #[default]
+    Normal,
+    Best,
+    Manual,
+}
+
+fn default_image_quality() -> u8 {
+    80
+}
+
 /// User-facing configuration, persisted in the `settings` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +333,22 @@ pub struct Settings {
     /// Maximum bytes stored for one clipboard file or folder group.
     #[serde(default = "default_snapshot_limit_mb")]
     pub max_snapshot_size_mb: u32,
+    /// Optional include/exclude policy for local file clipboard capture.
+    #[serde(default)]
+    pub file_filter_mode: FileFilterMode,
+    /// Lowercase extensions such as `.txt` used by Include mode.
+    #[serde(default = "default_included_extensions")]
+    pub file_include_extensions: Vec<String>,
+    /// Lowercase extensions such as `.exe` used by Exclude mode.
+    #[serde(default = "default_excluded_extensions")]
+    pub file_exclude_extensions: Vec<String>,
+    /// Managed image format. Clipboard restoration remains visually equivalent.
+    #[serde(default)]
+    pub image_format: ImageFormat,
+    #[serde(default)]
+    pub image_compression: ImageCompression,
+    #[serde(default = "default_image_quality")]
+    pub image_quality: u8,
     /// Optional managed-content root. `None` uses Windows app data.
     #[serde(default)]
     pub storage_path: Option<String>,
@@ -189,6 +364,21 @@ pub struct Settings {
     pub launch_at_login: bool,
     /// Show the preview pane.
     pub show_preview: bool,
+    /// Share clipboard history with trusted devices discovered on the local network.
+    #[serde(default)]
+    pub sync_enabled: bool,
+    /// Stable local device identifier used by LAN sync.
+    #[serde(default = "default_device_id")]
+    pub sync_device_id: String,
+    /// User-visible local device name.
+    #[serde(default = "default_device_name")]
+    pub sync_device_name: String,
+    /// Color used as the local device badge.
+    #[serde(default = "default_device_color")]
+    pub sync_device_color: String,
+    /// Short pairing code required before two devices exchange history.
+    #[serde(default = "default_pairing_code")]
+    pub sync_pairing_code: String,
 }
 
 impl Default for Settings {
@@ -205,6 +395,12 @@ impl Default for Settings {
             capture_files: true,
             store_file_snapshots: true,
             max_snapshot_size_mb: 512,
+            file_filter_mode: FileFilterMode::All,
+            file_include_extensions: default_included_extensions(),
+            file_exclude_extensions: default_excluded_extensions(),
+            image_format: ImageFormat::Original,
+            image_compression: ImageCompression::Normal,
+            image_quality: default_image_quality(),
             storage_path: None,
             ignored_apps: Vec::new(),
             backdrop: Backdrop::Acrylic,
@@ -212,6 +408,22 @@ impl Default for Settings {
             paste_on_enter: true,
             launch_at_login: false,
             show_preview: false,
+            sync_enabled: false,
+            sync_device_id: default_device_id(),
+            sync_device_name: default_device_name(),
+            sync_device_color: default_device_color(),
+            sync_pairing_code: default_pairing_code(),
+        }
+    }
+}
+
+impl Settings {
+    pub fn device_identity(&self) -> DeviceIdentity {
+        DeviceIdentity {
+            id: self.sync_device_id.clone(),
+            name: self.sync_device_name.clone(),
+            platform: PlatformKind::current(),
+            color: self.sync_device_color.clone(),
         }
     }
 }
@@ -284,6 +496,8 @@ pub struct NewItem {
     pub size_bytes: i64,
     pub content_hash: String,
     pub source: Option<SourceApp>,
+    pub device: Option<DeviceIdentity>,
+    pub sync_status: SyncStatus,
 }
 
 fn default_true() -> bool {
@@ -296,6 +510,29 @@ fn default_snapshot_limit_mb() -> u32 {
 
 fn default_settings_version() -> u32 {
     2
+}
+
+fn default_device_id() -> String {
+    let now = now_ms();
+    let pid = std::process::id();
+    format!("clipdeck-{now:x}-{pid:x}")
+}
+
+fn default_device_name() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "This device".into())
+}
+
+fn default_device_color() -> String {
+    "#28b7e8".into()
+}
+
+fn default_pairing_code() -> String {
+    let seed = now_ms().unsigned_abs() ^ u64::from(std::process::id());
+    format!("{:06}", seed % 1_000_000)
 }
 
 /// Current unix timestamp in milliseconds.

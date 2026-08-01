@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   NumberInput,
+  normaliseExtensions,
   Row,
   Segmented,
   SHORTCUT_RECORDER_DESCRIPTION,
@@ -47,5 +48,10 @@ describe('Settings accessibility', () => {
       'class="shortcut-recorder" aria-labelledby="global-hotkey-label" aria-describedby="global-hotkey-description"',
     );
     expect(markup).toContain('press Escape to finish recording');
+  });
+
+  it('normalises file extension filters for the native settings model', () => {
+    expect(normaliseExtensions('TXT, .Pdf; exe txt')).toEqual(['.txt', '.pdf', '.exe']);
+    expect(normaliseExtensions('  ')).toEqual([]);
   });
 });

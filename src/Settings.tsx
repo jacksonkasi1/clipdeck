@@ -1,6 +1,6 @@
 // ** import types
 import type { ReactNode } from 'react';
-import type { Backdrop, ItemKind, Settings as SettingsType, ThemeMode } from './lib/types';
+import type { Backdrop, FileFilterMode, ImageCompression, ImageFormat, ItemKind, Settings as SettingsType, ThemeMode } from './lib/types';
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
@@ -13,6 +13,8 @@ import {
   Database,
   FileImage,
   Files,
+  AppWindow,
+  Archive,
   FolderOpen,
   HardDrive,
   Keyboard,
@@ -23,15 +25,19 @@ import {
   Save,
   Settings2,
   Star,
+  RefreshCw,
   Trash2,
   Type,
+  Wifi,
 } from 'lucide-react';
 
+import { DeviceBadge } from './components/DeviceBadge';
 import { useStore } from './lib/store';
 import { api } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { applyTheme } from './lib/theme';
+import { toast } from './lib/toast';
 
 const HISTORY_KINDS = [
   { key: 'text', kind: 'text', label: 'Text', icon: Type },
@@ -42,6 +48,17 @@ const HISTORY_KINDS = [
   { key: 'emails', kind: 'email', label: 'Emails', icon: Mail },
 ] as const;
 
+type SettingsCategory = 'appearance' | 'capture' | 'history' | 'sync' | 'shortcuts' | 'advanced';
+
+const SETTINGS_CATEGORIES = [
+  { id: 'appearance', label: 'Appearance', icon: Monitor },
+  { id: 'capture', label: 'Capture', icon: Database },
+  { id: 'history', label: 'History & storage', icon: HardDrive },
+  { id: 'sync', label: 'Cross-device sync', icon: Wifi },
+  { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
+  { id: 'advanced', label: 'Advanced', icon: Settings2 },
+] as const;
+
 export const SHORTCUT_RECORDER_DESCRIPTION =
   'Click the field, press the shortcut you want, then press Escape to finish recording.';
 
@@ -50,10 +67,13 @@ export default function Settings() {
   const saveSettings = useStore((state) => state.saveSettings);
   const appearance = useStore((state) => state.appearance);
   const counts = useStore((state) => state.counts);
+  const sync = useStore((state) => state.sync);
   const clearHistory = useStore((state) => state.clearHistory);
   const clearCategory = useStore((state) => state.clearCategory);
   const changeStorageLocation = useStore((state) => state.changeStorageLocation);
+  const regeneratePairingCode = useStore((state) => state.regeneratePairingCode);
   const [local, setLocal] = useState<SettingsType | null>(settings);
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>('appearance');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [storageBusy, setStorageBusy] = useState(false);
@@ -65,7 +85,21 @@ export default function Settings() {
 
   useEffect(() => {
     applyTheme(local?.theme ?? 'system', appearance);
-  }, [local?.theme, appearance]);
+    document.documentElement.dataset.backdrop = local?.backdrop ?? 'acrylic';
+  }, [local?.theme, local?.backdrop, appearance]);
+
+  useEffect(() => {
+    const jumpToCategory = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      const index = Number(event.key) - 1;
+      const category = SETTINGS_CATEGORIES[index];
+      if (!category) return;
+      event.preventDefault();
+      setActiveCategory(category.id);
+    };
+    window.addEventListener('keydown', jumpToCategory);
+    return () => window.removeEventListener('keydown', jumpToCategory);
+  }, []);
 
   if (!local) return <SettingsLoading />;
 
@@ -150,7 +184,10 @@ export default function Settings() {
         </div>
       </header>
 
-      <div className="settings-scroll">
+      <div className="settings-body">
+        <SettingsNav active={activeCategory} onChange={setActiveCategory} />
+        <div className="settings-scroll" key={activeCategory}>
+        {activeCategory === 'appearance' && (
         <Section title="Appearance" description="Match Windows or choose a fixed theme." icon={<Monitor size={18} />}>
           <Row id="theme" label="Theme" description="System is recommended and follows Windows automatically.">
             <Segmented<ThemeMode>
@@ -163,7 +200,7 @@ export default function Settings() {
               ]}
             />
           </Row>
-          <Row id="window-material" label="Window material" description="Use a native Windows backdrop when supported.">
+          <Row id="window-material" label="Windows glass style" description="Acrylic is the native Windows flyout look and the default; Mica is calmer, while Solid disables transparency.">
             <Segmented<Backdrop>
               value={local.backdrop}
               onChange={(value) => update('backdrop', value)}
@@ -178,18 +215,68 @@ export default function Settings() {
             <Toggle checked={local.showPreview} onChange={(value) => update('showPreview', value)} />
           </Row>
         </Section>
+        )}
 
+        {activeCategory === 'capture' && (
         <Section title="Capture" description="Choose what Clipdeck remembers locally." icon={<Database size={18} />}>
           <Row id="capture-images" label="Capture images" description="Save image bytes and fast thumbnails in Clipdeck storage.">
             <Toggle checked={local.captureImages} onChange={(value) => update('captureImages', value)} />
           </Row>
+          <Row id="image-format" label="Stored image format" description="PNG keeps exact pixels; JPEG is smaller for photos; WebP offers compact lossless storage.">
+            <Segmented<ImageFormat>
+              value={local.imageFormat}
+              onChange={(value) => update('imageFormat', value)}
+              options={[
+                { value: 'original', label: 'As copied' },
+                { value: 'png', label: 'PNG' },
+                { value: 'jpeg', label: 'JPEG' },
+                { value: 'webp', label: 'WebP' },
+              ]}
+            />
+          </Row>
+          <Row id="image-compression" label="Image compression" description="Normal is recommended. Best saves more space but takes longer; Manual exposes quality.">
+            <Segmented<ImageCompression>
+              value={local.imageCompression}
+              onChange={(value) => update('imageCompression', value)}
+              options={[
+                { value: 'none', label: 'None' },
+                { value: 'normal', label: 'Normal' },
+                { value: 'best', label: 'Best' },
+                { value: 'manual', label: 'Manual' },
+              ]}
+            />
+          </Row>
+          {local.imageCompression === 'manual' && (
+            <Row id="image-quality" label="Image quality" description="Higher values preserve more detail and use more storage.">
+              <NumberInput value={local.imageQuality} min={1} max={100} step={1} suffix="%" onChange={(value) => update('imageQuality', value)} />
+            </Row>
+          )}
           <Row id="capture-files" label="Capture files and folders" description="Keep durable local snapshots without blocking clipboard capture.">
             <Toggle checked={local.captureFiles} onChange={(value) => update('captureFiles', value)} />
           </Row>
+          <Row id="file-filter-mode" label="File extension filter" description="Capture all files, only listed extensions, or everything except listed extensions. Folders remain available.">
+            <Segmented<FileFilterMode>
+              value={local.fileFilterMode}
+              onChange={(value) => update('fileFilterMode', value)}
+              options={[
+                { value: 'all', label: 'All' },
+                { value: 'include', label: 'Include' },
+                { value: 'exclude', label: 'Exclude' },
+              ]}
+            />
+          </Row>
+          {local.fileFilterMode !== 'all' && (
+            <Row id="file-filter-extensions" label={local.fileFilterMode === 'include' ? 'Included extensions' : 'Excluded extensions'} description="Separate extensions with commas, for example: .txt, .pdf, .exe">
+              <ExtensionInput
+                value={local.fileFilterMode === 'include' ? local.fileIncludeExtensions : local.fileExcludeExtensions}
+                onChange={(value) => update(local.fileFilterMode === 'include' ? 'fileIncludeExtensions' : 'fileExcludeExtensions', value)}
+              />
+            </Row>
+          )}
           <Row id="store-file-snapshots" label="Store file snapshots" description="Copy files into managed storage so history still works if the original changes.">
             <Toggle checked={local.storeFileSnapshots} onChange={(value) => update('storeFileSnapshots', value)} />
           </Row>
-          <Row id="snapshot-limit" label="Snapshot limit" description="Maximum stored size for one copied file or folder group.">
+          <Row id="snapshot-limit" label="Maximum copied size" description="Files or folder groups above this total size stay out of managed snapshot storage.">
             <NumberInput
               value={local.maxSnapshotSizeMb}
               min={1}
@@ -221,22 +308,26 @@ export default function Settings() {
           <Row id="paste-on-enter" label="Paste on Enter" description="Paste the selected item into the previously active app.">
             <Toggle checked={local.pasteOnEnter} onChange={(value) => update('pasteOnEnter', value)} />
           </Row>
-          <Row id="launch-at-login" label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
-            <Toggle checked={local.launchAtLogin} onChange={(value) => update('launchAtLogin', value)} />
-          </Row>
         </Section>
+        )}
 
-        <Section title="History and storage" description="Review usage and remove only what you choose." icon={<Database size={18} />}>
+        {activeCategory === 'history' && (
+        <Section title="History and storage" description="Review usage and remove only what you choose." icon={<Archive size={18} />}>
           <Row
             id="storage-location"
             label="Managed storage location"
             description="Changing it copies, verifies, switches, then removes only old Clipdeck-managed copies."
           >
-            <StorageLocationButton
-              busy={storageBusy}
-              path={local.storagePath}
-              onClick={() => void chooseStorage()}
-            />
+            <div className="storage-location-actions">
+              <StorageLocationButton
+                busy={storageBusy}
+                path={local.storagePath}
+                onClick={() => void chooseStorage()}
+              />
+              <button type="button" className="storage-open-button" title="Open Clipdeck storage in File Explorer" aria-label="Open Clipdeck storage in File Explorer" onClick={() => void api.openStorageFolder().catch((error: unknown) => setMutationError(mutationErrorMessage('Storage folder could not be opened.', error)))}>
+                <FolderOpen size={16} aria-hidden />
+              </button>
+            </div>
           </Row>
           <div className="history-summary">
             <Metric label="All items" value={counts.total} icon={<Database size={17} />} />
@@ -268,7 +359,49 @@ export default function Settings() {
             </button>
           </div>
         </Section>
+        )}
 
+        {activeCategory === 'sync' && (
+        <Section title="Cross-device sync" description="Pair trusted devices on the same local network." icon={<Wifi size={18} />}>
+          <Row id="sync-enabled" label="LAN sync" description="Discover paired Clipdeck devices and exchange text-like clipboard entries.">
+            <Toggle checked={local.syncEnabled} onChange={(value) => update('syncEnabled', value)} />
+          </Row>
+          <Row id="sync-device-name" label="Device name" description="Shown beside history items copied from this device.">
+            <TextInput
+              value={local.syncDeviceName}
+              onChange={(value) => update('syncDeviceName', value)}
+            />
+          </Row>
+          <Row id="sync-device-color" label="Device color" description="Used as a quick visual identifier in the history list.">
+            <ColorInput
+              value={local.syncDeviceColor}
+              onChange={(value) => update('syncDeviceColor', value)}
+            />
+          </Row>
+          <Row id="sync-pairing-code" label="Pairing code" description="Devices with the same code on the same network can sync.">
+            <button
+              type="button"
+              className="pairing-code-button"
+              onClick={() => void regeneratePairingCode()}
+              title="Generate a new pairing code"
+            >
+              <span>{local.syncPairingCode}</span>
+              <RefreshCw size={15} aria-hidden />
+            </button>
+          </Row>
+          <div className="peer-list" aria-label="Discovered sync devices">
+            {(sync?.peers.length ?? 0) === 0 ? (
+              <span className="peer-empty">No paired devices discovered yet</span>
+            ) : (
+              sync?.peers.map((peer) => (
+                <DeviceBadge key={peer.device.id} device={peer.device} status={peer.status} />
+              ))
+            )}
+          </div>
+        </Section>
+        )}
+
+        {activeCategory === 'shortcuts' && (
         <Section
           title="Keyboard shortcuts"
           description={`${getPlatform() === 'macos' ? 'macOS' : 'Windows'} key labels are used in this build.`}
@@ -295,6 +428,22 @@ export default function Settings() {
             ))}
           </div>
         </Section>
+        )}
+
+        {activeCategory === 'advanced' && (
+          <Section title="Advanced" description="Startup and application-level behavior." icon={<Settings2 size={18} />}>
+            <Row id="launch-at-login" label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
+              <Toggle checked={local.launchAtLogin} onChange={(value) => update('launchAtLogin', value)} />
+            </Row>
+            <Row id="ignored-apps" label="Ignored applications" description="Choose installed applications whose clipboard content Clipdeck should never save.">
+              <IgnoredApplications
+                value={local.ignoredApps}
+                onChange={(value) => update('ignoredApps', value)}
+              />
+            </Row>
+          </Section>
+        )}
+        </div>
       </div>
 
       <footer className="settings-footer">
@@ -316,6 +465,32 @@ export default function Settings() {
         </button>
       </footer>
     </div>
+  );
+}
+
+function SettingsNav({
+  active,
+  onChange,
+}: {
+  active: SettingsCategory;
+  onChange: (category: SettingsCategory) => void;
+}) {
+  return (
+    <nav className="settings-nav" aria-label="Settings categories">
+      {SETTINGS_CATEGORIES.map(({ id, label, icon: Icon }, index) => (
+        <button
+          key={id}
+          type="button"
+          className={active === id ? 'is-active' : ''}
+          aria-current={active === id ? 'page' : undefined}
+          onClick={() => onChange(id)}
+        >
+          <Icon size={17} aria-hidden />
+          <span>{label}</span>
+          <kbd>Ctrl+{index + 1}</kbd>
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -510,6 +685,86 @@ export function NumberInput({
         }}
       />
       {suffix && <span>{suffix}</span>}
+    </label>
+  );
+}
+
+function TextInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const aria = useRowAria();
+  return (
+    <input
+      className="text-field"
+      type="text"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+      value={value}
+      maxLength={64}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+function ExtensionInput({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+  const aria = useRowAria();
+  return (
+    <input
+      className="text-field extension-field"
+      type="text"
+      aria-labelledby={aria.labelledBy}
+      aria-describedby={aria.describedBy}
+      value={value.join(', ')}
+      placeholder=".txt, .pdf"
+      onChange={(event) => onChange(normaliseExtensions(event.target.value))}
+    />
+  );
+}
+
+export function normaliseExtensions(value: string): string[] {
+  return [...new Set(value.split(/[\s,;]+/).map((extension) => extension.trim().toLowerCase()).filter(Boolean).map((extension) => extension.startsWith('.') ? extension : `.${extension}`))];
+}
+
+function IgnoredApplications({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+  const aria = useRowAria();
+  const add = async () => {
+    try {
+      const selected = await api.chooseApplications();
+      const paths = typeof selected === 'string' ? [selected] : (selected ?? []);
+      onChange([...new Set([...value, ...paths])]);
+    } catch (error) {
+      toast(`Application picker could not open: ${String(error)}`, 'error');
+    }
+  };
+  return (
+    <div className="ignored-apps" aria-labelledby={aria.labelledBy} aria-describedby={aria.describedBy}>
+      <div className="ignored-app-list">
+        {value.map((path) => (
+          <span className="ignored-app-chip" key={path} title={path}>
+            <AppWindow size={13} aria-hidden /> {baseName(path)}
+            <button type="button" aria-label={`Remove ${baseName(path)}`} onClick={() => onChange(value.filter((item) => item !== path))}>×</button>
+          </span>
+        ))}
+      </div>
+      <button type="button" className="secondary-button" onClick={() => void add()}><AppWindow size={15} aria-hidden /> Choose apps</button>
+    </div>
+  );
+}
+
+function baseName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const aria = useRowAria();
+  return (
+    <label className="color-field">
+      <input
+        type="color"
+        aria-labelledby={aria.labelledBy}
+        aria-describedby={aria.describedBy}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <span>{value}</span>
     </label>
   );
 }

@@ -14,6 +14,7 @@ import {
 import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 import { api } from '../lib/tauri';
+import { toast } from '../lib/toast';
 import { getPlatform, getShortcutLabel } from '../lib/platform';
 
 export function SearchBar() {
@@ -76,7 +77,7 @@ export function SearchBar() {
         <input
           ref={ref}
           type="search"
-          placeholder="Type to search…"
+          placeholder="Search content, tags, or application…"
           value={search}
           onChange={(e) => void setSearch(e.target.value)}
           aria-label="Search clipboard history"
@@ -129,7 +130,9 @@ export function SearchBar() {
       <IconButton
         className="search-settings-button"
         label={`Settings (${getShortcutLabel('settings')})`}
-        onClick={() => void api.openSettingsWindow()}
+        onClick={() => void api.openSettingsWindow().catch((error: unknown) => {
+          toast(`Settings could not be opened: ${String(error)}`, 'error');
+        })}
       >
         <Settings2 size={18} aria-hidden />
       </IconButton>

@@ -30,6 +30,8 @@ import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 import { api, fileSrc } from '../lib/tauri';
 import { getShortcutLabel } from '../lib/platform';
+import { normaliseUrl, tryParseScheme } from '../lib/url';
+import { toast } from '../lib/toast';
 
 export function PreviewPane() {
   const selectedId = useStore((s) => s.selectedId);
@@ -45,7 +47,7 @@ export function PreviewPane() {
     };
     window.addEventListener('clipdeck:edit-selected', beginEditing);
     return () => window.removeEventListener('clipdeck:edit-selected', beginEditing);
-  }, [item]);
+  }, [item?.id]);
 
   return (
     <section className="preview-pane" aria-label="Preview">
@@ -75,6 +77,8 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
   const setShowDetails = useStore((s) => s.setShowDetails);
   const toggleFavorite = useStore((s) => s.toggleFavorite);
   const deleteItem = useStore((s) => s.deleteItem);
+  const deleteSelected = useStore((s) => s.deleteSelected);
+  const selectedIds = useStore((s) => s.selectedIds);
   const editable = item && ['text', 'link', 'email', 'color'].includes(item.kind);
 
   return (
@@ -123,10 +127,16 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
           )}
         </IconButton>
         <IconButton
-          label="Delete item"
+          label={selectedIds.length > 1 ? `Delete ${selectedIds.length} items` : 'Delete item'}
           tone="danger"
           disabled={!item}
-          onClick={() => item && void deleteItem(item.id)}
+          onClick={() => {
+            if (selectedIds.length > 1) {
+              void deleteSelected();
+            } else if (item) {
+              void deleteItem(item.id);
+            }
+          }}
         >
           <Trash2 size={18} aria-hidden />
         </IconButton>
@@ -240,7 +250,20 @@ function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
           <span>{url}</span>
         </button>
       </article>
-      <button type="button" className="secondary-button" onClick={() => void api.openUrl(url)}>
+      <button
+        type="button"
+        className="secondary-button"
+        onClick={() => {
+          const scheme = tryParseScheme(url);
+          if (!scheme) {
+            toast('That link is not a URL Clipdeck can open.', 'error');
+            return;
+          }
+          void api.openExternalUrl(normaliseUrl(url)).catch((error: unknown) => {
+            toast(`The default browser could not be opened: ${String(error)}`, 'error');
+          });
+        }}
+      >
         <ExternalLink size={16} aria-hidden /> Open in browser
       </button>
     </div>
@@ -321,6 +344,11 @@ function EditItem({
             event.stopPropagation();
             onCancel();
           } else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+            event.preventDefault();
+            event.currentTarget.form?.requestSubmit();
+          } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+            // Ctrl+S / Cmd+S saves the edit. preventDefault stops the webview
+            // from triggering its own "save page as" shortcut.
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           }

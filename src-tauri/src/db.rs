@@ -19,14 +19,15 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 
 use crate::error::{Error, Result};
 use crate::models::{
-    now_ms, ClipItem, Counts, ImageMeta, ItemKind, ListQuery, NewItem, Settings, SourceApp,
-    StoredFile,
+    now_ms, ClipItem, Counts, DeviceIdentity, ImageMeta, ItemKind, ListQuery, NewItem,
+    PlatformKind, Settings, SourceApp, StoredFile, SyncStatus,
 };
 
 /// Column list shared by every read query so that `row_to_item` stays valid.
 const COLUMNS: &str = "id, kind, preview, content, html, rtf, image_path, thumb_path, \
      image_w, image_h, file_paths, size_bytes, app_name, app_exe, app_icon, \
-     favorite, copy_count, first_copied_at, last_copied_at, file_assets";
+     favorite, copy_count, first_copied_at, last_copied_at, file_assets, \
+     device_id, device_name, device_platform, device_color, sync_status, tags";
 
 /// Plain text plus the optional HTML and RTF representations stored for an item.
 pub type RichFlavors = (String, Option<String>, Option<String>);
@@ -164,6 +165,30 @@ CREATE TABLE IF NOT EXISTS settings (
         if !column_exists(conn, "items", "file_assets")? {
             conn.execute("ALTER TABLE items ADD COLUMN file_assets TEXT", [])?;
         }
+        if !column_exists(conn, "items", "tags")? {
+            conn.execute(
+                "ALTER TABLE items ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )?;
+        }
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_items_app_name ON items(app_name)",
+            [],
+        )?;
+        for (column, definition) in [
+            ("device_id", "TEXT NOT NULL DEFAULT 'local'"),
+            ("device_name", "TEXT NOT NULL DEFAULT 'This device'"),
+            ("device_platform", "TEXT NOT NULL DEFAULT 'windows'"),
+            ("device_color", "TEXT NOT NULL DEFAULT '#28b7e8'"),
+            ("sync_status", "TEXT NOT NULL DEFAULT 'local'"),
+        ] {
+            if !column_exists(conn, "items", column)? {
+                conn.execute(
+                    &format!("ALTER TABLE items ADD COLUMN {column} {definition}"),
+                    [],
+                )?;
+            }
+        }
         // Early builds persisted boolean format flags into the TEXT flavor
         // columns. Normalize those rows so reads cannot fail with an SQLite
         // InvalidColumnType error and hide the entire history list.
@@ -234,6 +259,7 @@ CREATE TABLE IF NOT EXISTS settings (
         } else {
             Some(serde_json::to_string(&item.file_assets).unwrap_or_default())
         };
+        let device = item.device.clone().unwrap_or_else(default_local_device);
 
         conn.execute(
             "INSERT INTO items (
@@ -242,14 +268,14 @@ CREATE TABLE IF NOT EXISTS settings (
                 file_paths, size_bytes, hash,
                 app_name, app_exe, app_icon,
                 favorite, copy_count, first_copied_at, last_copied_at,
-                file_assets
+                file_assets, device_id, device_name, device_platform, device_color, sync_status
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5,
                 ?6, ?7, ?8, ?9,
                 ?10, ?11, ?12,
                 ?13, ?14, ?15,
                 0, 1, ?16, ?16,
-                ?17
+                ?17, ?18, ?19, ?20, ?21, ?22
              )",
             params![
                 item.kind.as_str(),
@@ -269,6 +295,11 @@ CREATE TABLE IF NOT EXISTS settings (
                 item.source.as_ref().and_then(|s| s.icon_path.as_ref()),
                 now,
                 file_assets_json,
+                device.id,
+                device.name,
+                device.platform.as_str(),
+                device.color,
+                item.sync_status.as_str(),
             ],
         )?;
 
@@ -289,8 +320,20 @@ CREATE TABLE IF NOT EXISTS settings (
         // degrades to "no text filter" rather than returning zero rows.
         let match_expr = query.search.as_deref().and_then(fts_match_expression);
         if let Some(expr) = match_expr {
-            sql.push_str(" AND id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)");
+            let plain = format!(
+                "%{}%",
+                query
+                    .search
+                    .as_deref()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_lowercase()
+            );
+            sql.push_str(" AND (id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?) OR lower(COALESCE(app_name, '')) LIKE ? OR lower(COALESCE(app_exe, '')) LIKE ? OR lower(COALESCE(tags, '')) LIKE ?)");
             binds.push(Box::new(expr));
+            binds.push(Box::new(plain.clone()));
+            binds.push(Box::new(plain.clone()));
+            binds.push(Box::new(plain));
         }
 
         if !query.kinds.is_empty() {
@@ -335,6 +378,13 @@ CREATE TABLE IF NOT EXISTS settings (
         self.get(id)?.ok_or(Error::NotFound("clipboard item"))
     }
 
+    pub fn get_by_hash(&self, hash: &str) -> Result<Option<ClipItem>> {
+        let conn = self.conn.lock();
+        let mut stmt =
+            conn.prepare_cached(&format!("SELECT {COLUMNS} FROM items WHERE hash = ?1"))?;
+        Ok(stmt.query_row(params![hash], row_to_item).optional()?)
+    }
+
     /// Returns the rich flavours for an entry: `(content, html, rtf)`.
     pub fn flavors(&self, id: i64) -> Result<Option<RichFlavors>> {
         let conn = self.conn.lock();
@@ -353,6 +403,25 @@ CREATE TABLE IF NOT EXISTS settings (
             params![id, favorite as i32],
         )?;
         require_changed(changed, "clipboard item")
+    }
+
+    pub fn set_tags(&self, id: i64, tags: &[String]) -> Result<ClipItem> {
+        let normalized: Vec<String> = tags
+            .iter()
+            .map(|tag| tag.trim().trim_start_matches('#').to_lowercase())
+            .filter(|tag| !tag.is_empty())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .take(20)
+            .collect();
+        let json =
+            serde_json::to_string(&normalized).map_err(|error| Error::Other(error.to_string()))?;
+        let changed = self.conn.lock().execute(
+            "UPDATE items SET tags = ?2 WHERE id = ?1",
+            params![id, json],
+        )?;
+        require_changed(changed, "clipboard item")?;
+        self.get_required(id)
     }
 
     /// Replaces the managed file snapshot state after the background copy
@@ -641,6 +710,32 @@ CREATE TABLE IF NOT EXISTS settings (
         transaction.commit()?;
         Ok(())
     }
+
+    pub fn import_synced_text_item(
+        &self,
+        device: &DeviceIdentity,
+        kind: ItemKind,
+        content: &str,
+        content_hash: &str,
+    ) -> Result<Upsert> {
+        if !matches!(
+            kind,
+            ItemKind::Text | ItemKind::Link | ItemKind::Email | ItemKind::Color
+        ) {
+            return Err(Error::Other(
+                "only text-like synced items are supported".into(),
+            ));
+        }
+        self.upsert(&NewItem {
+            kind,
+            content: content.to_string(),
+            size_bytes: content.len().min(i64::MAX as usize) as i64,
+            content_hash: content_hash.to_string(),
+            device: Some(device.clone()),
+            sync_status: SyncStatus::Synced,
+            ..Default::default()
+        })
+    }
 }
 
 fn migrated_path(value: &str, old_root: &Path, new_root: &Path) -> String {
@@ -767,12 +862,32 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<ClipItem> {
         files,
         file_assets,
         size_bytes: row.get(11)?,
+        tags: row
+            .get::<_, Option<String>>(25)?
+            .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+            .unwrap_or_default(),
         source,
         favorite: row.get::<_, i32>(15)? != 0,
         copy_count: row.get(16)?,
+        device: DeviceIdentity {
+            id: row.get(20)?,
+            name: row.get(21)?,
+            platform: PlatformKind::from_db_value(&row.get::<_, String>(22)?),
+            color: row.get(23)?,
+        },
+        sync_status: SyncStatus::from_db_value(&row.get::<_, String>(24)?),
         first_copied_at: row.get(17)?,
         last_copied_at: row.get(18)?,
     })
+}
+
+fn default_local_device() -> DeviceIdentity {
+    DeviceIdentity {
+        id: "local".into(),
+        name: "This device".into(),
+        platform: PlatformKind::current(),
+        color: "#28b7e8".into(),
+    }
 }
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
@@ -983,6 +1098,56 @@ mod tests {
             })
             .unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn tags_are_normalized_and_searchable() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db
+            .upsert(&text_item("quarterly report", "tagged"))
+            .unwrap()
+            .id();
+        let item = db
+            .set_tags(id, &[" Work ".into(), "#URGENT".into(), "work".into()])
+            .unwrap();
+        assert_eq!(item.tags, vec!["urgent", "work"]);
+        let hits = db
+            .list(&ListQuery {
+                search: Some("urgent".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, id);
+    }
+
+    #[test]
+    fn application_name_is_searchable() {
+        let db = Db::open_in_memory().unwrap();
+        let mut item = text_item("copied value", "app-search");
+        item.source = Some(SourceApp {
+            name: "Visual Studio Code".into(),
+            exe_path: r"C:\Apps\Code.exe".into(),
+            icon_path: None,
+        });
+        let id = db.upsert(&item).unwrap().id();
+        let hits = db
+            .list(&ListQuery {
+                search: Some("studio".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, id);
+    }
+
+    #[test]
+    fn missing_tag_target_is_reported() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(matches!(
+            db.set_tags(999, &["missing".into()]),
+            Err(Error::NotFound("clipboard item"))
+        ));
     }
 
     #[test]
