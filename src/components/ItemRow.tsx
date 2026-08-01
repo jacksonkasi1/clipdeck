@@ -3,7 +3,7 @@ import type { ClipItem } from '../lib/types';
 import type { MouseEvent } from 'react';
 
 // ** import lib
-import { Check, Star } from 'lucide-react';
+import { Star } from 'lucide-react';
 
 import { DeviceBadge } from './DeviceBadge';
 import { KindIcon } from './KindIcon';
@@ -15,6 +15,8 @@ interface Props {
   selected: boolean;
   /** True when the row is part of a multi-selection (highlighted but not the primary row). */
   multiSelected?: boolean;
+  /** True when the list has keyboard focus and this row is the active one. */
+  focused?: boolean;
   position: number;
   total: number;
   onSelect: (event: MouseEvent<HTMLDivElement>) => void;
@@ -24,12 +26,12 @@ export function ItemRow({
   item,
   selected,
   multiSelected = false,
+  focused = false,
   position,
   total,
   onSelect,
 }: Props) {
   const toggleFavorite = useStore((s) => s.toggleFavorite);
-  const selectToggle = useStore((s) => s.selectToggle);
 
   return (
     <div
@@ -42,6 +44,7 @@ export function ItemRow({
         'item-row',
         selected ? 'selected' : '',
         multiSelected ? 'is-multi-selected' : '',
+        focused ? 'is-focused' : '',
         `item-kind-${item.kind}`,
       ].filter(Boolean).join(' ')}
       title="Double-click to paste"
@@ -50,19 +53,6 @@ export function ItemRow({
         void import('../lib/tauri').then((m) => m.api.pasteActive(item.id, 'original'));
       }}
     >
-      <button
-        type="button"
-        className={`row-select-check ${selected || multiSelected ? 'is-checked' : ''}`}
-        aria-label={selected || multiSelected ? `Remove ${item.preview || 'item'} from selection` : `Add ${item.preview || 'item'} to selection`}
-        aria-pressed={selected || multiSelected}
-        onClick={(event) => {
-          event.stopPropagation();
-          selectToggle(item.id);
-        }}
-        onDoubleClick={(event) => event.stopPropagation()}
-      >
-        {(selected || multiSelected) && <Check size={13} strokeWidth={3} aria-hidden />}
-      </button>
       <span className="kind-icon">
         <KindIcon item={item} />
       </span>

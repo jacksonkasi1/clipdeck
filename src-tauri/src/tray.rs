@@ -11,12 +11,16 @@ use tauri::{App, Manager};
 use crate::window;
 
 pub fn install(app: &mut App) -> tauri::Result<()> {
+    let quick = MenuItem::with_id(app, "quick", "Quick Clipboard", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show Clipdeck", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
 
-    let menu = Menu::with_items(app, &[&show, &separator, &settings, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[&quick, &show, &separator, &settings, &separator, &quit],
+    )?;
 
     TrayIconBuilder::with_id("clipdeck-tray")
         .tooltip("Clipdeck — clipboard history")
@@ -27,11 +31,10 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    window::show(&window);
-                }
-            }
+            "quick" => window::show_quick(app),
+            // "Show Clipdeck" is the application affordance and is deliberately
+            // wired to the decorated window only.
+            "show" => window::show_full(app),
             "settings" => {
                 if let Some(window) = app.get_webview_window("settings") {
                     let _ = window.unminimize();
@@ -56,9 +59,7 @@ pub fn install(app: &mut App) -> tauri::Result<()> {
                 if matches!(button, MouseButton::Left)
                     && matches!(button_state, MouseButtonState::Up)
                 {
-                    if let Some(window) = tray.app_handle().get_webview_window("main") {
-                        window::toggle(&window);
-                    }
+                    window::toggle_quick(tray.app_handle());
                 }
             }
         })

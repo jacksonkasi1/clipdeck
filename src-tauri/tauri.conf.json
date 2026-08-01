@@ -16,7 +16,7 @@
       {
         "label": "main",
         "title": "Clipdeck",
-        "url": "index.html",
+        "url": "index.html?mode=full",
         "width": 1120,
         "height": 720,
         "minWidth": 420,
@@ -25,6 +25,9 @@
         "visible": false,
         "focus": false,
         "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
         "decorations": true,
         "transparent": true,
         "shadow": true,
@@ -32,6 +35,27 @@
         "skipTaskbar": false,
         "visibleOnAllWorkspaces": false,
         "dragDropEnabled": true
+      },
+      {
+        "label": "quick",
+        "title": "Clipdeck quick clipboard",
+        "url": "index.html?mode=quick",
+        "width": 560,
+        "height": 620,
+        "center": true,
+        "visible": false,
+        "focus": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visibleOnAllWorkspaces": false,
+        "dragDropEnabled": false
       }
     ],
     "security": {

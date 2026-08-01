@@ -4,7 +4,8 @@
 //! Tauri window theme, DWM frame, and Windows backdrop so native decorations do
 //! not drift from the selected theme.
 
-use crate::models::ThemeMode;
+use crate::models::{Backdrop, ThemeMode};
+use crate::window_layout::WindowMode;
 
 /// Resolves the persisted preference against the current operating-system
 /// theme. Explicit choices never inherit a later system change.
@@ -20,7 +21,7 @@ pub fn resolve_dark(mode: ThemeMode, system_dark: bool) -> bool {
 use tauri::{AppHandle, Emitter, Manager, Theme, WebviewWindow, Window};
 
 #[cfg(not(test))]
-use crate::models::{Backdrop, Settings, SystemAppearance};
+use crate::models::{Settings, SystemAppearance};
 #[cfg(not(test))]
 use crate::AppState;
 
@@ -34,6 +35,30 @@ pub fn sync_native_appearance(
 ) -> SystemAppearance {
     let settings = state.settings.read().clone();
     apply_all(&app, &settings)
+}
+
+/// Chooses the Fluent material for a window from its behavioural contract.
+///
+/// Material is a property of *what the window is*, not of a single global
+/// preference:
+///
+/// * the quick palette is a transient shell flyout, so it uses Desktop Acrylic
+///   for a strong relationship with whatever is behind it;
+/// * the full application and the settings window are long-lived surfaces, so
+///   they use Mica, which is the Windows 11 foundation material for app windows
+///   and is far cheaper to composite.
+///
+/// An explicit `Solid` preference always wins, and Acrylic degrades to Mica and
+/// then to a solid Fluent surface when the compositor refuses it (transparency
+/// effects off, high contrast, remote sessions).
+pub fn material_for(mode: WindowMode, preference: Backdrop) -> Backdrop {
+    match preference {
+        Backdrop::Solid => Backdrop::Solid,
+        _ => match mode {
+            WindowMode::Quick => Backdrop::Acrylic,
+            WindowMode::Full | WindowMode::Settings => Backdrop::Mica,
+        },
+    }
 }
 
 /// Applies the persisted appearance to one native window.
@@ -84,7 +109,9 @@ pub fn handle_system_theme_changed(window: &Window, theme: Theme) {
 
 #[cfg(not(test))]
 fn apply_surface(window: &WebviewWindow, settings: &Settings, dark: bool) -> Backdrop {
-    let effective = crate::win::backdrop::apply(window, settings.backdrop, dark);
+    let mode = crate::window::mode_for_label(window.label());
+    let requested = material_for(mode, settings.backdrop);
+    let effective = crate::win::backdrop::apply(window, requested, dark);
     let _ = window.emit("clipdeck:backdrop", effective);
     effective
 }
@@ -118,5 +145,30 @@ mod tests {
     fn explicit_light_ignores_the_operating_system() {
         assert!(!resolve_dark(ThemeMode::Light, true));
         assert!(!resolve_dark(ThemeMode::Light, false));
+    }
+
+    #[test]
+    fn the_quick_flyout_uses_desktop_acrylic_and_app_windows_use_mica() {
+        assert_eq!(
+            material_for(WindowMode::Quick, Backdrop::Acrylic),
+            Backdrop::Acrylic
+        );
+        assert_eq!(
+            material_for(WindowMode::Full, Backdrop::Acrylic),
+            Backdrop::Mica
+        );
+        // The settings window is long lived; it must not inherit Acrylic just
+        // because the transient palette uses it.
+        assert_eq!(
+            material_for(WindowMode::Settings, Backdrop::Acrylic),
+            Backdrop::Mica
+        );
+    }
+
+    #[test]
+    fn an_explicit_solid_preference_disables_every_material() {
+        for mode in [WindowMode::Quick, WindowMode::Full, WindowMode::Settings] {
+            assert_eq!(material_for(mode, Backdrop::Solid), Backdrop::Solid);
+        }
     }
 }

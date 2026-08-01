@@ -138,6 +138,49 @@ fn key_name_to_code(name: &str) -> Option<Code> {
     })
 }
 
+/// The two independently registered global actions.
+///
+/// `AppState` used to hold a single `active_hotkey`, which made it impossible
+/// to bind the quick palette and the full application window at the same time
+/// without one silently overwriting the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum HotkeyAction {
+    /// Toggles the frameless quick clipboard palette.
+    QuickPalette,
+    /// Opens the decorated full application window.
+    FullWindow,
+}
+
+impl HotkeyAction {
+    /// Human-readable label used in validation errors shown in Settings.
+    pub fn label(self) -> &'static str {
+        match self {
+            HotkeyAction::QuickPalette => "Quick clipboard",
+            HotkeyAction::FullWindow => "Open full Clipdeck",
+        }
+    }
+}
+
+/// Rejects a save where both actions would be bound to the same accelerator.
+///
+/// Two identical registrations cannot both win, so the second would silently
+/// steal the first action's shortcut. Failing loudly keeps Settings truthful.
+pub fn validate_distinct(quick: &str, full: &str) -> Result<(Shortcut, Shortcut)> {
+    let quick_shortcut = parse(quick).map_err(|error| {
+        Error::Other(format!("{}: {error}", HotkeyAction::QuickPalette.label()))
+    })?;
+    let full_shortcut = parse(full)
+        .map_err(|error| Error::Other(format!("{}: {error}", HotkeyAction::FullWindow.label())))?;
+    if quick_shortcut == full_shortcut {
+        return Err(Error::Other(format!(
+            "\u{201c}{}\u{201d} and \u{201c}{}\u{201d} cannot use the same shortcut",
+            HotkeyAction::QuickPalette.label(),
+            HotkeyAction::FullWindow.label()
+        )));
+    }
+    Ok((quick_shortcut, full_shortcut))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +209,27 @@ mod tests {
         assert!(parse("Ctrl+V+C").is_err());
         assert!(parse("Ctrl++V").is_err());
         assert!(parse("Ctrl+V+").is_err());
+    }
+
+    #[test]
+    fn rejects_two_actions_bound_to_the_same_accelerator() {
+        let error = validate_distinct("Ctrl+Shift+V", "Ctrl+Shift+V").unwrap_err();
+        assert!(error.to_string().contains("cannot use the same shortcut"));
+    }
+
+    #[test]
+    fn accepts_the_shipped_defaults_for_both_actions() {
+        let (quick, full) = validate_distinct("Ctrl+Shift+V", "Ctrl+Alt+Shift+V").unwrap();
+        assert_ne!(quick, full);
+        assert_eq!(quick.key, Code::KeyV);
+        assert_eq!(full.key, Code::KeyV);
+        assert!(full.mods.contains(Modifiers::ALT));
+        assert!(!quick.mods.contains(Modifiers::ALT));
+    }
+
+    #[test]
+    fn names_the_offending_action_when_one_shortcut_is_invalid() {
+        let error = validate_distinct("Ctrl+Shift+V", "Shift+V").unwrap_err();
+        assert!(error.to_string().contains("Open full Clipdeck"));
     }
 }

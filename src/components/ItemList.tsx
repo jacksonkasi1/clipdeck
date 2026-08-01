@@ -1,5 +1,5 @@
 // ** import lib
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Clipboard, SearchX } from 'lucide-react';
 
@@ -20,6 +20,10 @@ export function ItemList() {
   const hasMore = useStore((s) => s.hasMore);
   const loadMore = useStore((s) => s.loadMore);
   const parentRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the list owns keyboard focus so the active row can show a
+  // slightly stronger neutral fill. This replaces the old accent focus ring,
+  // which drew a blue rectangle around the entire scrolling container.
+  const [listFocused, setListFocused] = useState(false);
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -63,6 +67,20 @@ export function ItemList() {
       aria-multiselectable="true"
       aria-busy={loading || loadingMore}
       aria-activedescendant={selectedId !== null ? `clip-item-${selectedId}` : undefined}
+      onFocus={() => setListFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setListFocused(false);
+        }
+      }}
+      onKeyDown={(event) => {
+        // Ctrl+Space toggles the active row without a mouse, replacing the
+        // per-row checkbox that used to provide keyboard multi-select.
+        if (event.key === ' ' && (event.ctrlKey || event.metaKey) && selectedId !== null) {
+          event.preventDefault();
+          selectToggle(selectedId);
+        }
+      }}
     >
       {items.length === 0 ? (
         <EmptyState search={search} />
@@ -94,6 +112,7 @@ export function ItemList() {
                   item={item}
                   selected={item.id === selectedId}
                   multiSelected={selectedIds.length > 1 && selectedSet.has(item.id)}
+                  focused={listFocused && item.id === selectedId}
                   position={row.index + 1}
                   total={hasMore ? -1 : items.length}
                   onSelect={(event) => {

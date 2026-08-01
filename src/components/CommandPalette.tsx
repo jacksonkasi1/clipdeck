@@ -89,7 +89,7 @@ export function CommandPalette() {
         break;
       case 'edit':
         if (!showPreview) {
-          setShowPreview(true);
+          void setShowPreview(true);
           window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipdeck:edit-selected')), 0);
         } else {
           window.dispatchEvent(new CustomEvent('clipdeck:edit-selected'));
@@ -108,7 +108,7 @@ export function CommandPalette() {
         await api.openSettingsWindow();
         break;
       case 'preview':
-        setShowPreview(!showPreview);
+        void setShowPreview(!showPreview);
         break;
       case 'clear': {
         let approved: boolean;

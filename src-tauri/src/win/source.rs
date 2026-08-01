@@ -42,6 +42,27 @@ pub fn current_foreground() -> isize {
     }
 }
 
+/// True when `hwnd` belongs to the Clipdeck process itself.
+///
+/// The quick palette captures the previously focused window before it is shown.
+/// Rapid hotkey presses can race that capture, so the caller must never store a
+/// Clipdeck HWND as the paste target — doing so would make Enter paste into our
+/// own webview instead of the user's application.
+pub fn is_own_window(hwnd: isize) -> bool {
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+
+    match pid_for_hwnd(hwnd) {
+        Some(pid) => pid == unsafe { GetCurrentProcessId() },
+        None => false,
+    }
+}
+
+/// Returns the foreground window, or `None` when it is one of our own windows.
+pub fn foreground_paste_target() -> Option<isize> {
+    let hwnd = current_foreground();
+    (hwnd != 0 && !is_own_window(hwnd)).then_some(hwnd)
+}
+
 /// Resolves the source application for a clipboard event.
 ///
 /// `hint` is an optional foreground window captured before the popup appeared.

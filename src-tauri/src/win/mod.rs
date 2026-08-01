@@ -8,6 +8,7 @@
 //! * [`source`]     — attributes a clipboard change to the application that made it.
 //! * [`paste`]      — restores focus to the previous app and synthesises Ctrl+V.
 //! * [`apps`]       — discovers stable identities for application exclusions.
+//! * [`monitor`]    — resolves the active monitor's work area for the flyout.
 
 #[cfg(not(test))]
 pub mod appearance;
@@ -15,6 +16,8 @@ pub mod appearance;
 pub mod apps;
 #[cfg(not(test))]
 pub mod backdrop;
+#[cfg(not(test))]
+pub mod monitor;
 #[cfg(not(test))]
 pub mod paste;
 pub mod source;

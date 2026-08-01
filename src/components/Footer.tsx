@@ -5,6 +5,7 @@ import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 
 export function Footer() {
+  const mode = useStore((s) => s.mode);
   const selectedId = useStore((s) => s.selectedId);
   const items = useStore((s) => s.items);
   const select = useStore((s) => s.select);
@@ -31,6 +32,34 @@ export function Footer() {
         <button type="button" className="bulk-delete-button" onClick={() => void deleteSelected()}>
           <Trash2 size={15} aria-hidden /> Delete selected
         </button>
+      </footer>
+    );
+  }
+
+  // The flyout is keyboard-first and has no window chrome, so its footer is a
+  // compact hint strip rather than the application's navigation controls.
+  if (mode === 'quick') {
+    return (
+      <footer className="history-footer is-quick" aria-label="Keyboard actions">
+        <span className="footer-hint">
+          <kbd aria-label="Up and down arrows">↑↓</kbd>
+          <span>Navigate</span>
+        </span>
+        <span className="footer-hint">
+          <kbd aria-label="Enter"><CornerDownLeft size={13} aria-hidden /></kbd>
+          <span>{pasteOnEnter ? 'Paste' : 'Copy'}</span>
+        </span>
+        <span className="footer-hint">
+          <kbd>Esc</kbd>
+          <span>Close</span>
+        </span>
+        <div className="footer-spacer" />
+        <span className="footer-hint">
+          <kbd>Ctrl</kbd>
+          <kbd>Shift</kbd>
+          <kbd>P</kbd>
+          <span>Preview</span>
+        </span>
       </footer>
     );
   }

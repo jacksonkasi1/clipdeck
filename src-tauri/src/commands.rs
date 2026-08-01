@@ -97,7 +97,7 @@ pub async fn copy_to_clipboard(
 
 #[tauri::command]
 pub async fn paste_active(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     id: i64,
     flavor: PasteFlavor,
@@ -116,10 +116,11 @@ pub async fn paste_active(
         rtf.as_deref(),
     )?;
 
+    // Hide the window the paste came from *before* restoring focus. Hiding
+    // `main` unconditionally would dismiss the full application whenever the
+    // user pasted from the quick palette, and vice versa.
     let target = *state.foreground.lock();
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
-    }
+    crate::window::hide_self(&window);
     if !paste::paste_to(target) {
         return Err(Error::Other(
             "the previous application could not receive the paste command".into(),
@@ -220,14 +221,19 @@ pub async fn save_settings(
         crate::capture_policy::normalize_extensions(&settings.file_exclude_extensions);
     settings.ignored_apps = crate::capture_policy::normalize_ignored_apps(&settings.ignored_apps);
     settings.image_quality = settings.image_quality.clamp(1, 100);
-    let hotkey_changed = settings.hotkey != previous.hotkey;
-    if hotkey_changed {
-        switch_hotkey(&app, &settings.hotkey)?;
+    // Both accelerators are validated together so Settings can surface a clear
+    // "same shortcut" error instead of one action silently stealing the other.
+    let hotkeys_changed = settings.hotkey != previous.hotkey
+        || settings.full_window_hotkey != previous.full_window_hotkey;
+    if hotkeys_changed {
+        register_hotkeys(&app, &settings.hotkey, &settings.full_window_hotkey)?;
     }
     if let Err(error) = state.db.save_settings(&settings) {
-        if hotkey_changed {
-            if let Err(rollback_error) = switch_hotkey(&app, &previous.hotkey) {
-                log::error!("could not restore the previous hotkey: {rollback_error}");
+        if hotkeys_changed {
+            if let Err(rollback_error) =
+                register_hotkeys(&app, &previous.hotkey, &previous.full_window_hotkey)
+            {
+                log::error!("could not restore the previous hotkeys: {rollback_error}");
             }
         }
         return Err(error);
@@ -352,48 +358,154 @@ pub async fn open_storage_folder(app: AppHandle, state: tauri::State<'_, AppStat
 
 #[tauri::command]
 pub async fn hide_window(window: tauri::WebviewWindow) -> Result<()> {
-    crate::window::hide(&window);
+    crate::window::hide_self(&window);
+    Ok(())
+}
+
+/// Reports which behavioural contract the calling window implements.
+///
+/// The frontend uses this rather than guessing from the viewport width, which
+/// would misclassify a narrow full application window as the quick palette.
+#[tauri::command]
+pub async fn window_mode(window: tauri::WebviewWindow) -> Result<crate::window::WindowMode> {
+    Ok(crate::window::mode_for_label(window.label()))
+}
+
+#[tauri::command]
+pub async fn show_quick_palette(app: AppHandle) -> Result<()> {
+    crate::window::show_quick(&app);
     Ok(())
 }
 
 #[tauri::command]
+pub async fn hide_quick_palette(app: AppHandle) -> Result<()> {
+    crate::window::hide_quick(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_quick_palette(app: AppHandle) -> Result<()> {
+    crate::window::toggle_quick(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn show_full_application(app: AppHandle) -> Result<()> {
+    crate::window::show_full(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn hide_full_application(app: AppHandle) -> Result<()> {
+    crate::window::hide_full(&app);
+    Ok(())
+}
+
+/// Pins the quick palette so clicking away no longer dismisses it.
+///
+/// The flag is stored natively because the light-dismiss decision is taken in
+/// the Rust `Focused(false)` handler, at which point React state is unreachable.
+#[tauri::command]
+pub async fn set_quick_pinned(app: AppHandle, value: bool) -> Result<bool> {
+    crate::window::set_quick_pinned(&app, value);
+    Ok(value)
+}
+
+#[tauri::command]
 pub async fn set_always_on_top(window: tauri::WebviewWindow, value: bool) -> Result<bool> {
+    // The quick palette is always topmost by contract; only the full
+    // application exposes a user-controlled always-on-top toggle.
+    if crate::window::mode_for_label(window.label()) == crate::window::WindowMode::Quick {
+        return Ok(true);
+    }
     window
         .set_always_on_top(value)
         .map_err(|error| Error::Other(error.to_string()))?;
     Ok(value)
 }
 
+/// Applies a preview-visibility change to the window that requested it.
+///
+/// Quick and full keep *separate* persisted preferences and separate
+/// dimensions. A single shared `showPreview` used to resize whichever window
+/// happened to be mounted, so toggling the preview in the flyout also resized
+/// the desktop application.
 #[tauri::command]
-pub async fn set_preview_visible(window: tauri::WebviewWindow, value: bool) -> Result<bool> {
+pub async fn set_preview_visible(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, AppState>,
+    value: bool,
+) -> Result<bool> {
+    match crate::window::mode_for_label(window.label()) {
+        crate::window::WindowMode::Quick => {
+            persist_quick_preview(&app, &state, value)?;
+            let foreground = *state.foreground.lock();
+            crate::window::layout_quick(&window, value, foreground);
+        }
+        crate::window::WindowMode::Full => resize_full_for_preview(&window, value)?,
+        crate::window::WindowMode::Settings => {}
+    }
+    Ok(value)
+}
+
+/// Persists the quick palette's own compact/expanded choice.
+fn persist_quick_preview(
+    app: &AppHandle,
+    state: &tauri::State<'_, AppState>,
+    value: bool,
+) -> Result<()> {
+    let mut next = state.settings.read().clone();
+    if next.quick_preview_expanded == value {
+        return Ok(());
+    }
+    next.quick_preview_expanded = value;
+    state.db.save_settings(&next)?;
+    *state.settings.write() = next.clone();
+    let _ = app.emit("settings-updated", &next);
+    Ok(())
+}
+
+/// Grows or shrinks the **full application** window around its preview column,
+/// leaving the user's chosen height untouched.
+fn resize_full_for_preview(window: &tauri::WebviewWindow, value: bool) -> Result<()> {
     use tauri::{LogicalSize, Size};
+
+    const FULL_MIN_WIDTH_WITH_PREVIEW: f64 = 920.0;
+    const FULL_MIN_WIDTH_LIST_ONLY: f64 = 420.0;
+    const FULL_MIN_HEIGHT: f64 = 600.0;
 
     let current = window
         .inner_size()
         .map_err(|error| Error::Other(error.to_string()))?;
-    let scale = window.scale_factor().unwrap_or(1.0);
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
     let logical_width = f64::from(current.width) / scale;
     let logical_height = f64::from(current.height) / scale;
+
     if value {
         window
-            .set_min_size(Some(Size::Logical(LogicalSize::new(920.0, 600.0))))
+            .set_min_size(Some(Size::Logical(LogicalSize::new(
+                FULL_MIN_WIDTH_WITH_PREVIEW,
+                FULL_MIN_HEIGHT,
+            ))))
             .map_err(|error| Error::Other(error.to_string()))?;
-        if logical_width < 920.0 {
+        if logical_width < FULL_MIN_WIDTH_WITH_PREVIEW {
             window
-                .set_size(LogicalSize::new(1120.0, logical_height.max(600.0)))
+                .set_size(LogicalSize::new(
+                    1120.0,
+                    logical_height.max(FULL_MIN_HEIGHT),
+                ))
                 .map_err(|error| Error::Other(error.to_string()))?;
         }
     } else {
         window
-            .set_min_size(Some(Size::Logical(LogicalSize::new(420.0, 600.0))))
+            .set_min_size(Some(Size::Logical(LogicalSize::new(
+                FULL_MIN_WIDTH_LIST_ONLY,
+                FULL_MIN_HEIGHT,
+            ))))
             .map_err(|error| Error::Other(error.to_string()))?;
-        if logical_width > 620.0 {
-            window
-                .set_size(LogicalSize::new(520.0, logical_height.max(600.0)))
-                .map_err(|error| Error::Other(error.to_string()))?;
-        }
     }
-    Ok(value)
+    Ok(())
 }
 
 #[tauri::command]
@@ -482,37 +594,46 @@ pub fn enforce_history_policy_on_startup(app: &App) -> Result<()> {
     enforce_history_policy(&state)
 }
 
-/// Installs the saved global shortcut without making startup depend on it. A
-/// stale, unsupported, or OS-conflicting binding is replaced with the first
-/// available safe fallback and persisted so the UI stays truthful.
-pub fn install_hotkey(app: &App) {
+/// Installs both saved global shortcuts without making startup depend on them.
+///
+/// A stale, unsupported, or OS-conflicting pair is replaced with the first
+/// available safe fallback and persisted so Settings keeps telling the truth
+/// about what is actually bound.
+pub fn install_hotkeys(app: &App) {
     let state: tauri::State<AppState> = app.state();
-    let saved = state.settings.read().hotkey.clone();
-    if switch_hotkey(app.handle(), &saved).is_ok() {
+    let (saved_quick, saved_full) = {
+        let settings = state.settings.read();
+        (settings.hotkey.clone(), settings.full_window_hotkey.clone())
+    };
+    if register_hotkeys(app.handle(), &saved_quick, &saved_full).is_ok() {
         return;
     }
 
-    log::warn!("saved global shortcut is unavailable; trying safe fallbacks");
-    for fallback in ["Ctrl+Shift+V", "Ctrl+Alt+V", "Ctrl+Shift+C"] {
-        if fallback == saved {
+    log::warn!("saved global shortcuts are unavailable; trying safe fallbacks");
+    const FALLBACKS: [(&str, &str); 3] = [
+        ("Ctrl+Shift+V", "Ctrl+Alt+Shift+V"),
+        ("Ctrl+Alt+V", "Ctrl+Alt+Shift+C"),
+        ("Ctrl+Shift+C", "Ctrl+Alt+Shift+D"),
+    ];
+    for (quick, full) in FALLBACKS {
+        if quick == saved_quick && full == saved_full {
             continue;
         }
-        if switch_hotkey(app.handle(), fallback).is_ok() {
-            let mut settings = state.settings.write().clone();
-            settings.hotkey = fallback.to_string();
+        if register_hotkeys(app.handle(), quick, full).is_ok() {
+            let mut settings = state.settings.read().clone();
+            settings.hotkey = quick.to_string();
+            settings.full_window_hotkey = full.to_string();
             if let Err(error) = state.db.save_settings(&settings) {
-                log::error!("could not persist fallback global shortcut: {error}");
+                log::error!("could not persist fallback global shortcuts: {error}");
             }
             *state.settings.write() = settings.clone();
             let _ = app.emit("settings-updated", &settings);
             return;
         }
     }
-    log::error!("no safe global shortcut could be registered; use the tray icon to open Clipdeck");
+    log::error!("no safe global shortcuts could be registered; use the tray icon to open Clipdeck");
 }
 
-/// Spawns the clipboard listener with a sink that writes to the DB and emits
-/// `clip-updated` events to the frontend.
 pub fn install_clipboard_listener(app: &App) -> Result<()> {
     let state: tauri::State<AppState> = app.state();
     let (snapshot_tx, snapshot_rx) = mpsc::sync_channel::<SnapshotJob>(16);
@@ -931,36 +1052,60 @@ pub fn apply_runtime_settings(app: &AppHandle, settings: &Settings) -> Result<()
     Ok(())
 }
 
-fn switch_hotkey(app: &AppHandle, combo: &str) -> Result<()> {
-    let shortcut = crate::hotkey::parse(combo)?;
+/// Registers both global actions atomically.
+///
+/// Either both accelerators end up bound, or nothing changes: a partial apply
+/// would leave the user with one working shortcut and one dead one after a
+/// failed save. The previous registrations are only released once the new ones
+/// have been accepted by the OS.
+fn register_hotkeys(app: &AppHandle, quick_combo: &str, full_combo: &str) -> Result<()> {
+    let (quick, full) = crate::hotkey::validate_distinct(quick_combo, full_combo)?;
     let state: tauri::State<AppState> = app.state();
-    let mut active = state.active_hotkey.lock();
-    if active.as_ref() == Some(&shortcut) {
+    let mut active = state.hotkeys.lock();
+    if active.quick == Some(quick) && active.full == Some(full) {
         return Ok(());
     }
 
     let manager = app.global_shortcut();
     manager
-        .on_shortcut(shortcut, move |app, _scut, event| {
+        .on_shortcut(quick, move |app, _shortcut, event| {
             if matches!(event.state(), ShortcutState::Pressed) {
-                if let Some(window) = app.get_webview_window("main") {
-                    crate::window::toggle(&window);
-                }
+                crate::window::toggle_quick(app);
             }
         })
-        .map_err(|e| Error::Other(format!("hotkey registration failed: {e}")))?;
+        .map_err(|error| {
+            Error::Other(format!(
+                "{} shortcut could not be registered: {error}",
+                crate::hotkey::HotkeyAction::QuickPalette.label()
+            ))
+        })?;
 
-    if let Some(previous) = *active {
+    if let Err(error) = manager.on_shortcut(full, move |app, _shortcut, event| {
+        if matches!(event.state(), ShortcutState::Pressed) {
+            crate::window::show_full(app);
+        }
+    }) {
+        // Roll the half-applied change back so the caller can restore the
+        // previously working pair without leaking a stray registration.
+        if let Err(cleanup) = manager.unregister(quick) {
+            log::error!("could not roll back the quick palette shortcut: {cleanup}");
+        }
+        return Err(Error::Other(format!(
+            "{} shortcut could not be registered: {error}",
+            crate::hotkey::HotkeyAction::FullWindow.label()
+        )));
+    }
+
+    for previous in [active.quick, active.full].into_iter().flatten() {
+        if previous == quick || previous == full {
+            continue;
+        }
         if let Err(error) = manager.unregister(previous) {
-            if let Err(rollback_error) = manager.unregister(shortcut) {
-                log::error!("could not roll back new hotkey registration: {rollback_error}");
-            }
-            return Err(Error::Other(format!(
-                "previous hotkey could not be released: {error}"
-            )));
+            log::warn!("a previous global shortcut could not be released: {error}");
         }
     }
-    *active = Some(shortcut);
+    active.quick = Some(quick);
+    active.full = Some(full);
     Ok(())
 }
 

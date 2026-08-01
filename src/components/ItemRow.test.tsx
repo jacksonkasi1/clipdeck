@@ -48,7 +48,43 @@ describe('ItemRow', () => {
     expect(markup).toContain('class="item-row selected item-kind-color"');
     expect(markup).toContain('class="kind-color"');
     expect(markup).not.toContain('class="item-row selected kind-color"');
-    expect(markup).toContain('class="row-select-check is-checked"');
-    expect(markup).toContain('aria-pressed="true"');
+  });
+
+  it('renders no selection checkbox, so selection is background-only', () => {
+    const markup = renderToStaticMarkup(
+      <ItemRow
+        item={COLOR_ITEM}
+        selected
+        multiSelected
+        position={1}
+        total={1}
+        onSelect={() => undefined}
+      />,
+    );
+
+    // The checkbox markup is removed outright rather than hidden with CSS, so
+    // the row grid has no dead column and the list cannot regress into a
+    // checkbox selection mode.
+    expect(markup).not.toContain('row-select-check');
+    expect(markup).not.toContain('to selection');
+    // Selection stays exposed to assistive technology via aria-selected.
+    expect(markup).toContain('aria-selected="true"');
+    // The row has exactly one control left: the favourite toggle.
+    expect(markup.match(/<button/g)).toHaveLength(1);
+  });
+
+  it('marks the keyboard-active row without an accent focus ring', () => {
+    const markup = renderToStaticMarkup(
+      <ItemRow
+        item={COLOR_ITEM}
+        selected
+        focused
+        position={1}
+        total={1}
+        onSelect={() => undefined}
+      />,
+    );
+
+    expect(markup).toContain('is-focused');
   });
 });

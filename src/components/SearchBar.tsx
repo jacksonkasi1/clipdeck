@@ -18,6 +18,7 @@ import { toast } from '../lib/toast';
 import { getPlatform, getShortcutLabel } from '../lib/platform';
 
 export function SearchBar() {
+  const mode = useStore((s) => s.mode);
   const search = useStore((s) => s.search);
   const setSearch = useStore((s) => s.setSearch);
   const refresh = useStore((s) => s.refresh);
@@ -40,6 +41,15 @@ export function SearchBar() {
       if (e.defaultPrevented || target?.matches('textarea, [contenteditable="true"]')) return;
       if (e.key === 'Escape') {
         if (showCommands) return;
+        // In the flyout Escape is an unconditional dismiss. Clearing the search
+        // first would leave a transient popup stranded on screen, which is not
+        // how a Windows flyout behaves. The full application keeps the gentler
+        // clear-then-hide behaviour.
+        if (mode === 'quick') {
+          e.preventDefault();
+          void api.hideWindow();
+          return;
+        }
         if (search) {
           e.preventDefault();
           void setSearch('');
@@ -59,7 +69,7 @@ export function SearchBar() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [refresh, search, setSearch, showCommands]);
+  }, [mode, refresh, search, setSearch, showCommands]);
 
   useEffect(() => {
     const focusSearch = () => {
@@ -73,11 +83,11 @@ export function SearchBar() {
   return (
     <header className="search-header">
       <div className="search-field">
-        <Search size={19} strokeWidth={1.8} aria-hidden />
+        <Search size={16} strokeWidth={1.9} aria-hidden />
         <input
           ref={ref}
           type="search"
-          placeholder="Search content, tags, or application…"
+          placeholder={mode === 'quick' ? 'Search clipboard…' : 'Search content, tags, or application…'}
           value={search}
           onChange={(e) => void setSearch(e.target.value)}
           aria-label="Search clipboard history"
@@ -93,49 +103,73 @@ export function SearchBar() {
       </div>
       {search && (
         <IconButton label="Clear search" onClick={() => void setSearch('')}>
-          <X size={17} aria-hidden />
+          <X size={16} aria-hidden />
         </IconButton>
       )}
       <IconButton
-        label={pinned ? 'Unpin window' : 'Keep window on top'}
+        label={pinLabel(mode, pinned)}
         active={pinned}
         onClick={() => {
           const next = !pinned;
-          void api.setAlwaysOnTop(next).then(setPinned);
+          setPinned(next);
+          // In quick mode pinning also suppresses native light-dismiss, so the
+          // flag has to reach Rust; always-on-top alone would still let the
+          // focus-lost handler hide the palette.
+          const request = mode === 'quick'
+            ? api.setQuickPinned(next)
+            : api.setAlwaysOnTop(next);
+          void request.catch((error: unknown) => {
+            setPinned(!next);
+            toast(`The pin state could not be changed: ${String(error)}`, 'error');
+          });
         }}
       >
-        <Pin size={18} aria-hidden />
+        <Pin size={17} aria-hidden />
       </IconButton>
       <IconButton
         label={showPreview ? 'Hide preview pane' : 'Show preview pane'}
         active={showPreview}
-        onClick={() => setShowPreview(!showPreview)}
+        onClick={() => void setShowPreview(!showPreview)}
       >
         {showPreview ? (
-          <PanelRightClose size={18} aria-hidden />
+          <PanelRightClose size={17} aria-hidden />
         ) : (
-          <PanelRightOpen size={18} aria-hidden />
+          <PanelRightOpen size={17} aria-hidden />
         )}
       </IconButton>
-      <IconButton
-        label={`Commands (${getShortcutLabel('commands')})`}
-        onClick={() => setShowCommands(true)}
-      >
-        {getPlatform() === 'macos' ? (
-          <Command size={18} aria-hidden />
-        ) : (
-          <SquareTerminal size={18} aria-hidden />
-        )}
-      </IconButton>
-      <IconButton
-        className="search-settings-button"
-        label={`Settings (${getShortcutLabel('settings')})`}
-        onClick={() => void api.openSettingsWindow().catch((error: unknown) => {
-          toast(`Settings could not be opened: ${String(error)}`, 'error');
-        })}
-      >
-        <Settings2 size={18} aria-hidden />
-      </IconButton>
+      {/* The command palette and settings are application-level affordances.
+          They would dominate the flyout's toolbar, so quick mode omits them and
+          exposes settings through the tray and Ctrl+, instead. */}
+      {mode === 'full' && (
+        <>
+          <IconButton
+            label={`Commands (${getShortcutLabel('commands')})`}
+            onClick={() => setShowCommands(true)}
+          >
+            {getPlatform() === 'macos' ? (
+              <Command size={17} aria-hidden />
+            ) : (
+              <SquareTerminal size={17} aria-hidden />
+            )}
+          </IconButton>
+          <IconButton
+            className="search-settings-button"
+            label={`Settings (${getShortcutLabel('settings')})`}
+            onClick={() => void api.openSettingsWindow().catch((error: unknown) => {
+              toast(`Settings could not be opened: ${String(error)}`, 'error');
+            })}
+          >
+            <Settings2 size={17} aria-hidden />
+          </IconButton>
+        </>
+      )}
     </header>
   );
+}
+
+function pinLabel(mode: 'quick' | 'full', pinned: boolean): string {
+  if (mode === 'quick') {
+    return pinned ? 'Unpin quick clipboard' : 'Keep quick clipboard open';
+  }
+  return pinned ? 'Unpin window' : 'Keep window on top';
 }

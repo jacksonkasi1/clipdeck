@@ -29,6 +29,7 @@ import { useStore } from './lib/store';
 const baseSettings: SettingsType = {
   settingsVersion: 2,
   hotkey: 'Ctrl+Shift+V',
+  fullWindowHotkey: 'Ctrl+Alt+Shift+V',
   maxItems: 1000,
   retentionDays: 30,
   captureImages: true,
@@ -48,6 +49,7 @@ const baseSettings: SettingsType = {
   pasteOnEnter: true,
   launchAtLogin: false,
   showPreview: true,
+  quickPreviewExpanded: false,
   syncEnabled: false,
   syncDeviceId: 'device',
   syncDeviceName: 'Desktop',

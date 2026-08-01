@@ -29,6 +29,7 @@ pub mod sync;
 pub mod tray;
 #[cfg(not(test))]
 pub mod window;
+pub mod window_layout;
 
 mod win;
 
@@ -40,8 +41,22 @@ pub struct AppState {
     pub storage_operation: Arc<parking_lot::RwLock<()>>,
     pub settings: Arc<parking_lot::RwLock<models::Settings>>,
     pub sync: sync::SyncService,
-    pub active_hotkey: parking_lot::Mutex<Option<tauri_plugin_global_shortcut::Shortcut>>,
+    /// Both global accelerators, registered as one atomic pair.
+    pub hotkeys: parking_lot::Mutex<RegisteredHotkeys>,
+    /// HWND of the application focused before Clipdeck took over, used as the
+    /// paste target. Never holds one of Clipdeck's own windows.
     pub foreground: parking_lot::Mutex<isize>,
+    /// Whether the quick palette is pinned. Read by the native focus-lost
+    /// handler, so it cannot live in React state.
+    pub quick_pinned: std::sync::atomic::AtomicBool,
+}
+
+/// The currently registered accelerators for the two global actions.
+#[cfg(not(test))]
+#[derive(Default)]
+pub struct RegisteredHotkeys {
+    pub quick: Option<tauri_plugin_global_shortcut::Shortcut>,
+    pub full: Option<tauri_plugin_global_shortcut::Shortcut>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -52,9 +67,9 @@ pub fn run() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                window::toggle(&window);
-            }
+            // A second launch is the user asking for the application, not the
+            // transient flyout.
+            window::show_full(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -89,6 +104,13 @@ pub fn run() {
             commands::open_external_url,
             commands::open_storage_folder,
             commands::hide_window,
+            commands::window_mode,
+            commands::show_quick_palette,
+            commands::hide_quick_palette,
+            commands::toggle_quick_palette,
+            commands::show_full_application,
+            commands::hide_full_application,
+            commands::set_quick_pinned,
             commands::set_always_on_top,
             commands::set_preview_visible,
             commands::sync_state,
@@ -101,12 +123,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Every handler is label-aware: only the quick palette
+            // light-dismisses, and only the quick palette is re-centred.
             match event {
                 WindowEvent::CloseRequested { api, .. } => {
-                    // Hiding rather than exiting matches the Win+V flyout behaviour
-                    // and avoids the slow second-launch Tauri performs.
+                    // Hiding rather than destroying keeps both windows warm, so
+                    // the next hotkey press is instant.
                     api.prevent_close();
-                    let _ = window.hide();
+                    window::handle_close_requested(window);
+                }
+                WindowEvent::Focused(focused) => {
+                    window::handle_focus_changed(window, *focused);
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     native_appearance::handle_system_theme_changed(window, *theme);
@@ -169,24 +196,33 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         storage_operation: Arc::new(parking_lot::RwLock::new(())),
         settings: Arc::clone(&settings),
         sync,
-        active_hotkey: parking_lot::Mutex::new(None),
+        hotkeys: parking_lot::Mutex::new(RegisteredHotkeys::default()),
         foreground: parking_lot::Mutex::new(0),
+        quick_pinned: std::sync::atomic::AtomicBool::new(false),
     };
     app.manage(state);
 
-    // Apply backdrop before showing the window so the user never sees a
-    // frame without Acrylic.
-    if let Some(window) = app.get_webview_window("main") {
+    // Both windows are declared hidden in tauri.conf.json and stay alive for
+    // the whole session. Applying the material now — before either is ever
+    // shown — means the user never sees a transparent or unstyled frame flash
+    // in front of the Acrylic/Mica backdrop.
+    {
         let app_state: tauri::State<AppState> = app.state();
         let settings = app_state.settings.read().clone();
         let system = crate::win::appearance::read();
-        let backdrop = native_appearance::apply_window(&window, &settings, &system);
-        log::info!("applied backdrop: {backdrop:?}");
+        for label in [window::MAIN_LABEL, window::QUICK_LABEL] {
+            let Some(window) = app.get_webview_window(label) else {
+                log::error!("window '{label}' is missing from tauri.conf.json");
+                continue;
+            };
+            let backdrop = native_appearance::apply_window(&window, &settings, &system);
+            log::info!("applied {backdrop:?} backdrop to '{label}'");
+        }
     }
 
-    // Tray icon and global shortcut are installed even on autostart.
+    // Tray icon and global shortcuts are installed even on autostart.
     tray::install(app)?;
-    commands::install_hotkey(app);
+    commands::install_hotkeys(app);
     if let Err(error) = commands::enforce_history_policy_on_startup(app) {
         log::error!("startup history cleanup failed: {error}");
     }

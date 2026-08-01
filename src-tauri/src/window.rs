@@ -1,67 +1,280 @@
-//! Native show/hide behavior for the reusable main window.
+//! Native window routing for Clipdeck's two long-lived windows.
 //!
-//! The configured size and centered initial position are applied once by
-//! Tauri. Subsequent opens preserve the user's last size and position so the
-//! window behaves like a normal Windows desktop application.
+//! Clipdeck deliberately keeps **two** pre-created webview windows alive for the
+//! whole session instead of mutating a single window between two very different
+//! shapes:
+//!
+//! * [`QUICK_LABEL`] — a frameless, always-on-top, taskbar-less flyout that is
+//!   re-centred on the active monitor on every invocation and light-dismisses on
+//!   focus loss. It behaves like a shell surface, not an application.
+//! * [`MAIN_LABEL`] — a normal decorated, resizable, taskbar-visible desktop
+//!   application window that remembers its own position and size and never hides
+//!   just because it lost focus.
+//!
+//! Switching one window between those two contracts at runtime (toggling
+//! `decorations`, `skip_taskbar`, `resizable`, and the size on every hotkey
+//! press) causes visible flashing, corrupts the remembered application
+//! dimensions, and races the focus-lost handler. Two windows keep each contract
+//! static, and both are warm so the hotkey is instant.
 
-use tauri::{Manager, PhysicalPosition, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Window,
+};
 
-use crate::win::source;
+use crate::win::{monitor, source};
+use crate::window_layout::{
+    centered_in_work_area, centered_origin, fit_within, titlebar_is_reachable, PhysicalRect,
+    QUICK_COMPACT_WIDTH, QUICK_EXPANDED_WIDTH, QUICK_HEIGHT, QUICK_WORK_AREA_MARGIN,
+};
+pub use crate::window_layout::{
+    mode_for_label, WindowMode, MAIN_LABEL, QUICK_LABEL, SETTINGS_LABEL,
+};
 use crate::AppState;
 
-/// Captures the foreground window so paste can return focus to it.
-pub fn capture_previous(window: &WebviewWindow) {
-    if let Some(state) = window.app_handle().try_state::<AppState>() {
-        *state.foreground.lock() = source::current_foreground();
+pub fn quick(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window(QUICK_LABEL)
+}
+
+pub fn main_window(app: &AppHandle) -> Option<WebviewWindow> {
+    app.get_webview_window(MAIN_LABEL)
+}
+
+// ---- shared foreground capture -------------------------------------------
+
+/// Remembers the application that was focused before Clipdeck took over.
+///
+/// Clipdeck's own windows are rejected: a second hotkey press while the palette
+/// is already focused must not overwrite the real paste target with our webview.
+pub fn capture_previous(app: &AppHandle) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    if let Some(hwnd) = source::foreground_paste_target() {
+        *state.foreground.lock() = hwnd;
     }
 }
 
-pub fn show(window: &WebviewWindow) {
-    capture_previous(window);
+fn clear_previous(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        *state.foreground.lock() = 0;
+    }
+}
+
+// ---- quick palette --------------------------------------------------------
+
+/// True when the user pinned the quick palette, which suppresses light-dismiss.
+pub fn quick_is_pinned(app: &AppHandle) -> bool {
+    app.try_state::<AppState>()
+        .map(|state| {
+            state
+                .quick_pinned
+                .load(std::sync::atomic::Ordering::Relaxed)
+        })
+        .unwrap_or(false)
+}
+
+/// Records the pin state where the *native* focus-lost handler can read it.
+///
+/// Keeping this only in React state would not work: the light-dismiss decision
+/// is made in Rust when the webview has already lost focus.
+pub fn set_quick_pinned(app: &AppHandle, pinned: bool) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .quick_pinned
+            .store(pinned, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// True when the quick palette is currently showing its preview column.
+pub fn quick_is_expanded(app: &AppHandle) -> bool {
+    app.try_state::<AppState>()
+        .map(|state| state.settings.read().quick_preview_expanded)
+        .unwrap_or(false)
+}
+
+/// Shows the quick palette on the monitor the user is working on.
+///
+/// The previous foreground window is captured *before* the palette is shown so
+/// paste can hand focus back afterwards.
+pub fn show_quick(app: &AppHandle) {
+    capture_previous(app);
+    let Some(window) = quick(app) else {
+        log::error!("quick palette window is missing");
+        return;
+    };
+    let expanded = quick_is_expanded(app);
+    let foreground = app
+        .try_state::<AppState>()
+        .map(|state| *state.foreground.lock())
+        .unwrap_or(0);
+
+    layout_quick(&window, expanded, foreground);
+    let _ = window.set_always_on_top(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+    // Tells the webview to replay its open transition and focus the search field.
+    let _ = app.emit_to(QUICK_LABEL, "clipdeck:quick-opened", ());
+}
+
+pub fn hide_quick(app: &AppHandle) {
+    if let Some(window) = quick(app) {
+        let _ = window.hide();
+    }
+}
+
+pub fn toggle_quick(app: &AppHandle) {
+    let visible = quick(app)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if visible {
+        hide_quick(app);
+    } else {
+        show_quick(app);
+    }
+}
+
+/// Resizes the quick palette and re-centres it in the active monitor's work
+/// area. Called on every invocation and whenever the preview column is toggled;
+/// the quick window deliberately never restores a previously dragged position.
+pub fn layout_quick(window: &WebviewWindow, expanded: bool, foreground: isize) {
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
+    let desired_width = if expanded {
+        QUICK_EXPANDED_WIDTH
+    } else {
+        QUICK_COMPACT_WIDTH
+    };
+
+    let area = monitor::resolve(foreground).or_else(|| fallback_work_area(window));
+    let Some(area) = area else {
+        let _ = window.set_size(LogicalSize::new(desired_width, QUICK_HEIGHT));
+        let _ = window.center();
+        return;
+    };
+
+    let (width, height) = fit_within(
+        desired_width * scale,
+        QUICK_HEIGHT * scale,
+        f64::from(area.width),
+        f64::from(area.height),
+        QUICK_WORK_AREA_MARGIN * scale,
+    );
+    let _ = window.set_size(PhysicalSize::new(
+        width.round() as u32,
+        height.round() as u32,
+    ));
+
+    let (x, y) = centered_in_work_area(
+        PhysicalRect {
+            x: i64::from(area.x),
+            y: i64::from(area.y),
+            width: i64::from(area.width),
+            height: i64::from(area.height),
+        },
+        width,
+        height,
+    );
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+/// Falls back to Tauri's monitor list when Win32 cannot report a work area.
+fn fallback_work_area(window: &WebviewWindow) -> Option<monitor::WorkArea> {
+    let target = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten())?;
+    Some(monitor::WorkArea {
+        x: target.position().x,
+        y: target.position().y,
+        width: target.size().width as i32,
+        height: target.size().height as i32,
+    })
+}
+
+// ---- full application window ---------------------------------------------
+
+/// Shows the normal desktop application window, restoring its remembered
+/// position and size.
+pub fn show_full(app: &AppHandle) {
+    capture_previous(app);
+    let Some(window) = main_window(app) else {
+        log::error!("main application window is missing");
+        return;
+    };
     let _ = window.unminimize();
-    ensure_titlebar_reachable(window);
+    ensure_titlebar_reachable(&window);
     let _ = window.show();
     let _ = window.set_focus();
 }
 
-pub fn hide(window: &WebviewWindow) {
-    if let Some(state) = window.app_handle().try_state::<AppState>() {
-        *state.foreground.lock() = 0;
-    }
-    let _ = window.hide();
-}
-
-pub fn toggle(window: &WebviewWindow) {
-    match window.is_visible() {
-        Ok(true) => hide(window),
-        _ => show(window),
+pub fn hide_full(app: &AppHandle) {
+    clear_previous(app);
+    if let Some(window) = main_window(app) {
+        let _ = window.hide();
     }
 }
 
-const MIN_REACHABLE_TITLEBAR_WIDTH: i64 = 96;
-const TITLEBAR_HEIGHT: i64 = 40;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PhysicalRect {
-    x: i64,
-    y: i64,
-    width: i64,
-    height: i64,
-}
-
-impl PhysicalRect {
-    fn right(self) -> i64 {
-        self.x.saturating_add(self.width)
-    }
-
-    fn bottom(self) -> i64 {
-        self.y.saturating_add(self.height)
+pub fn toggle_full(app: &AppHandle) {
+    let visible = main_window(app)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if visible {
+        hide_full(app);
+    } else {
+        show_full(app);
     }
 }
 
-/// Keeps a reused window movable after a monitor is disconnected or its
-/// resolution changes. Normal in-bounds positions are deliberately preserved.
+/// Hides whichever window issued a request, honouring that window's contract.
+pub fn hide_self(window: &WebviewWindow) {
+    let app = window.app_handle().clone();
+    match mode_for_label(window.label()) {
+        WindowMode::Quick => hide_quick(&app),
+        WindowMode::Full => hide_full(&app),
+        WindowMode::Settings => {
+            let _ = window.hide();
+        }
+    }
+}
+
+// ---- native window events -------------------------------------------------
+
+/// Applies the label-specific focus contract.
+///
+/// Only the quick palette light-dismisses, and only when it is not pinned. The
+/// full application window must stay visible when the user clicks another app.
+pub fn handle_focus_changed(window: &Window, focused: bool) {
+    if focused || mode_for_label(window.label()) != WindowMode::Quick {
+        return;
+    }
+    let app = window.app_handle().clone();
+    if quick_is_pinned(&app) {
+        return;
+    }
+    hide_quick(&app);
+}
+
+/// Applies the label-specific close contract. Every Clipdeck window hides
+/// instead of being destroyed so the next open is warm.
+pub fn handle_close_requested(window: &Window) {
+    let app = window.app_handle().clone();
+    match mode_for_label(window.label()) {
+        WindowMode::Quick => hide_quick(&app),
+        WindowMode::Full => hide_full(&app),
+        WindowMode::Settings => {
+            let _ = window.hide();
+        }
+    }
+}
+
+// ---- remembered position safety net (full application only) ---------------
+
+/// Keeps the reused **application** window movable after a monitor is
+/// disconnected or its resolution changes. Normal in-bounds positions are
+/// deliberately preserved. This must never run for the quick palette, which has
+/// no titlebar and is re-centred on every invocation instead.
 fn ensure_titlebar_reachable(window: &WebviewWindow) {
+    debug_assert_eq!(mode_for_label(window.label()), WindowMode::Full);
     let Ok(position) = window.outer_position() else {
         return;
     };
@@ -108,120 +321,4 @@ fn ensure_titlebar_reachable(window: &WebviewWindow) {
     };
     let (x, y) = centered_origin(window_rect, target_rect);
     let _ = window.set_position(PhysicalPosition::new(x, y));
-}
-
-fn titlebar_is_reachable(window: PhysicalRect, monitors: &[PhysicalRect]) -> bool {
-    let titlebar = PhysicalRect {
-        height: window.height.clamp(0, TITLEBAR_HEIGHT),
-        ..window
-    };
-    let required_width = titlebar.width.clamp(0, MIN_REACHABLE_TITLEBAR_WIDTH);
-
-    monitors.iter().any(|monitor| {
-        overlap(titlebar.x, titlebar.right(), monitor.x, monitor.right()) >= required_width
-            && overlap(titlebar.y, titlebar.bottom(), monitor.y, monitor.bottom())
-                >= titlebar.height
-    })
-}
-
-fn centered_origin(window: PhysicalRect, monitor: PhysicalRect) -> (i32, i32) {
-    let x = monitor
-        .x
-        .saturating_add((monitor.width.saturating_sub(window.width)).max(0) / 2);
-    let y = monitor
-        .y
-        .saturating_add((monitor.height.saturating_sub(window.height)).max(0) / 2);
-    (
-        x.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-        y.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32,
-    )
-}
-
-fn overlap(a_start: i64, a_end: i64, b_start: i64, b_end: i64) -> i64 {
-    a_end.min(b_end).saturating_sub(a_start.max(b_start)).max(0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const PRIMARY: PhysicalRect = PhysicalRect {
-        x: 0,
-        y: 0,
-        width: 1920,
-        height: 1080,
-    };
-
-    #[test]
-    fn keeps_a_reachable_user_position() {
-        let window = PhysicalRect {
-            x: 1300,
-            y: 160,
-            width: 520,
-            height: 720,
-        };
-
-        assert!(titlebar_is_reachable(window, &[PRIMARY]));
-    }
-
-    #[test]
-    fn rejects_a_window_left_on_a_disconnected_monitor() {
-        let window = PhysicalRect {
-            x: -1800,
-            y: 120,
-            width: 1120,
-            height: 720,
-        };
-
-        assert!(!titlebar_is_reachable(window, &[PRIMARY]));
-    }
-
-    #[test]
-    fn rejects_a_window_whose_titlebar_is_above_the_display() {
-        let window = PhysicalRect {
-            x: 600,
-            y: -36,
-            width: 520,
-            height: 720,
-        };
-
-        assert!(!titlebar_is_reachable(window, &[PRIMARY]));
-    }
-
-    #[test]
-    fn accepts_a_reachable_titlebar_on_a_secondary_display() {
-        let secondary = PhysicalRect {
-            x: -1280,
-            y: 0,
-            width: 1280,
-            height: 1024,
-        };
-        let window = PhysicalRect {
-            x: -900,
-            y: 90,
-            width: 520,
-            height: 720,
-        };
-
-        assert!(titlebar_is_reachable(window, &[PRIMARY, secondary]));
-    }
-
-    #[test]
-    fn centers_compact_and_full_windows_without_negative_offsets() {
-        let compact = PhysicalRect {
-            x: 0,
-            y: 0,
-            width: 520,
-            height: 720,
-        };
-        let oversized = PhysicalRect {
-            x: 0,
-            y: 0,
-            width: 2400,
-            height: 1200,
-        };
-
-        assert_eq!(centered_origin(compact, PRIMARY), (700, 180));
-        assert_eq!(centered_origin(oversized, PRIMARY), (0, 0));
-    }
 }

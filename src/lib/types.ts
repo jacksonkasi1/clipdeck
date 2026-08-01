@@ -131,7 +131,10 @@ export interface ApplicationInfo extends IgnoredApp {
 
 export interface Settings {
   settingsVersion: number;
+  /** Accelerator that toggles the frameless quick clipboard palette. */
   hotkey: string;
+  /** Accelerator that opens the full, decorated application window. */
+  fullWindowHotkey: string;
   maxItems: number;
   retentionDays: number;
   captureImages: boolean;
@@ -150,7 +153,10 @@ export interface Settings {
   theme: ThemeMode;
   pasteOnEnter: boolean;
   launchAtLogin: boolean;
+  /** Preview visibility for the full application window. */
   showPreview: boolean;
+  /** Compact (false) vs expanded (true) layout for the quick palette. */
+  quickPreviewExpanded: boolean;
   syncEnabled: boolean;
   syncDeviceId: string;
   syncDeviceName: string;

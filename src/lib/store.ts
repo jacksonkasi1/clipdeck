@@ -6,6 +6,7 @@ import { create } from 'zustand';
 
 import { HISTORY_PAGE_SIZE, mergeUniquePage, pageMayHaveMore } from './paging';
 import { api, on } from './tauri';
+import { resolveWindowMode, type WindowMode } from './window-mode';
 
 interface State {
   items: ClipItem[];
@@ -19,6 +20,16 @@ interface State {
   settings: Settings | null;
   sync: SyncState | null;
   appearance: SystemAppearance | null;
+  /** Which native window this store instance belongs to. */
+  mode: WindowMode;
+  /**
+   * Preview visibility for *this* window only.
+   *
+   * Quick and full each persist their own preference (`quickPreviewExpanded`
+   * and `showPreview`). A single shared flag used to resize whichever window
+   * happened to be mounted, so expanding the flyout also resized the desktop
+   * application and clobbered its remembered width.
+   */
   showPreview: boolean;
   showDetails: boolean;
   showCommands: boolean;
@@ -57,7 +68,7 @@ interface Actions {
   saveSettings: (settings: Settings) => Promise<Settings>;
   regeneratePairingCode: () => Promise<void>;
   changeStorageLocation: (path: string) => Promise<Settings>;
-  setShowPreview: (show: boolean) => void;
+  setShowPreview: (show: boolean) => Promise<void>;
   setShowDetails: (show: boolean) => void;
   setShowCommands: (show: boolean) => void;
   applyAppearance: (appearance: SystemAppearance) => void;
@@ -89,6 +100,7 @@ export const useStore = create<State & Actions>((set, get) => ({
   settings: null,
   sync: null,
   appearance: null,
+  mode: resolveWindowMode(),
   showPreview: false,
   showDetails: true,
   showCommands: false,
@@ -346,7 +358,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   loadSettings: async () => {
     const settings = await api.loadSettings();
-    set({ settings, showPreview: settings.showPreview });
+    set({ settings, showPreview: previewFor(get().mode, settings) });
   },
 
   loadSyncState: async () => {
@@ -356,7 +368,7 @@ export const useStore = create<State & Actions>((set, get) => ({
 
   saveSettings: async (settings) => {
     const next = await api.saveSettings(settings);
-    set({ settings: next, showPreview: next.showPreview });
+    set({ settings: next, showPreview: previewFor(get().mode, next) });
     await get().loadSyncState();
     return next;
   },
@@ -374,12 +386,28 @@ export const useStore = create<State & Actions>((set, get) => ({
     return next;
   },
 
-  setShowPreview: (show) => set({ showPreview: show }),
+  /**
+   * Applies a preview change to this window only. The native side resizes the
+   * calling window and persists the matching per-window preference.
+   */
+  setShowPreview: async (show) => {
+    set({ showPreview: show });
+    try {
+      await api.setPreviewVisible(show);
+    } catch (error) {
+      console.error('Failed to apply the preview layout', error);
+    }
+  },
   setShowDetails: (show) => set({ showDetails: show }),
   setShowCommands: (show) => set({ showCommands: show }),
 
   applyAppearance: (appearance) => set({ appearance }),
 }));
+
+/** Picks the preview preference that belongs to a given window. */
+export function previewFor(mode: WindowMode, settings: Settings): boolean {
+  return mode === 'quick' ? settings.quickPreviewExpanded : settings.showPreview;
+}
 
 function buildQuery(s: State, offset: number): ListQuery {
   return {
@@ -405,7 +433,10 @@ export async function bootStore() {
     on<ClipItem>('clip-updated', () => void refresh()),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
-      useStore.setState({ settings, showPreview: settings.showPreview });
+      useStore.setState((state) => ({
+        settings,
+        showPreview: previewFor(state.mode, settings),
+      }));
     }),
     on<void>('sync-peers-updated', () => {
       void useStore.getState().loadSyncState();

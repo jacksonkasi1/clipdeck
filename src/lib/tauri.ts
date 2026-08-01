@@ -54,6 +54,18 @@ export const api = {
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
   openStorageFolder: () => invoke<void>('open_storage_folder'),
   hideWindow: () => invoke<void>('hide_window'),
+  windowMode: () => invoke<'quick' | 'full' | 'settings'>('window_mode'),
+  showQuickPalette: () => invoke<void>('show_quick_palette'),
+  hideQuickPalette: () => invoke<void>('hide_quick_palette'),
+  toggleQuickPalette: () => invoke<void>('toggle_quick_palette'),
+  showFullApplication: () => invoke<void>('show_full_application'),
+  hideFullApplication: () => invoke<void>('hide_full_application'),
+  /**
+   * Mirrors the pin state into native state. The Rust `Focused(false)` handler
+   * reads it to decide whether the quick palette light-dismisses, so this
+   * cannot live in React state alone.
+   */
+  setQuickPinned: (value: boolean) => invoke<boolean>('set_quick_pinned', { value }),
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
   setPreviewVisible: (value: boolean) => invoke<boolean>('set_preview_visible', { value }),
   syncState: () => invoke<SyncState>('sync_state'),

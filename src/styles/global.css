@@ -16,6 +16,11 @@ body,
   overflow: hidden;
 }
 
+/* html/body/#root must stay transparent on native-material windows. Painting a
+   translucent colour here, again on .app-frame, and again on each pane stacked
+   three sheets over the DWM backdrop and made Acrylic look almost opaque.
+   `--window` resolves to `transparent` under [data-backdrop=acrylic|mica] and
+   to a solid colour in the Solid/high-contrast fallback. */
 html {
   font-family: var(--font-ui);
   font-size: 14px;
@@ -25,8 +30,9 @@ html {
   -webkit-font-smoothing: antialiased;
 }
 
-body {
-  background: var(--window);
+body,
+#root {
+  background: transparent;
   user-select: none;
 }
 
@@ -46,9 +52,18 @@ button:not(:disabled),
   cursor: default;
 }
 
+/* Fluent focus ring for real controls only. Listbox containers and options opt
+   out (see `.item-list` / `.item-row` in app.css) because a rectangle drawn
+   around the scrolling history reads as a stray blue box, and selection is
+   already communicated by a neutral row fill. */
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
+}
+
+[role='listbox']:focus-visible,
+[role='option']:focus-visible {
+  outline: none;
 }
 
 ::selection {

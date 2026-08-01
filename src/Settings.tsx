@@ -418,13 +418,30 @@ export default function Settings() {
           description={`${getPlatform() === 'macos' ? 'macOS' : 'Windows'} key labels are used in this build.`}
           icon={<Keyboard size={18} />}
         >
+          {/* Two distinct global actions. Labelling both "Open Clipdeck" made
+              it impossible to tell which window a shortcut would summon. */}
           <Row
             id="global-hotkey"
-            label="Open Clipdeck"
-            description={SHORTCUT_RECORDER_DESCRIPTION}
+            label="Quick clipboard"
+            description={`Opens the compact clipboard flyout. ${SHORTCUT_RECORDER_DESCRIPTION}`}
           >
             <ShortcutRecorder value={local.hotkey} onChange={(value) => update('hotkey', value)} />
           </Row>
+          <Row
+            id="full-window-hotkey"
+            label="Open full Clipdeck"
+            description={`Opens the full application window. ${SHORTCUT_RECORDER_DESCRIPTION}`}
+          >
+            <ShortcutRecorder
+              value={local.fullWindowHotkey}
+              onChange={(value) => update('fullWindowHotkey', value)}
+            />
+          </Row>
+          {local.hotkey.toLowerCase() === local.fullWindowHotkey.toLowerCase() && (
+            <p className="settings-validation-error" role="alert">
+              “Quick clipboard” and “Open full Clipdeck” cannot use the same shortcut.
+            </p>
+          )}
           <div className="shortcut-reference" aria-label="Keyboard shortcut reference">
             {APP_SHORTCUTS.map((shortcut) => (
               <div className="shortcut-reference-row" key={shortcut.id}>

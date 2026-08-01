@@ -2,7 +2,7 @@
 import type { Backdrop } from './lib/types';
 
 // ** import lib
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { CommandPalette } from './components/CommandPalette';
 import { DetailsTable } from './components/DetailsTable';
@@ -17,6 +17,7 @@ import { applyTheme } from './lib/theme';
 import { ToastSurface } from './lib/toast';
 
 export default function App() {
+  const mode = useStore((s) => s.mode);
   const appearance = useStore((s) => s.appearance);
   const settings = useStore((s) => s.settings);
   const showPreview = useStore((s) => s.showPreview);
@@ -36,16 +37,35 @@ export default function App() {
   const deleteItem = useStore((s) => s.deleteItem);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const clearHistory = useStore((s) => s.clearHistory);
+  // Drives the short open transition. Reset on every quick invocation so the
+  // palette animates in again instead of appearing already settled.
+  const [opening, setOpening] = useState(mode === 'quick');
+
+  useEffect(() => {
+    document.documentElement.dataset.mode = mode;
+  }, [mode]);
+
+  // The quick palette is a reused webview: it is hidden, not destroyed. Rust
+  // emits `clipdeck:quick-opened` on every invocation so the palette can replay
+  // its transition and put the caret back in the search field.
+  useEffect(() => {
+    if (mode !== 'quick') return;
+    const replayOpen = () => {
+      setOpening(true);
+      window.requestAnimationFrame(() => setOpening(false));
+      window.dispatchEvent(new CustomEvent('clipdeck:focus-search'));
+    };
+    replayOpen();
+    const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, [mode]);
 
   useEffect(() => {
     applyTheme(settings?.theme ?? 'system', appearance);
     document.documentElement.dataset.backdrop = settings?.backdrop ?? 'acrylic';
   }, [settings?.theme, settings?.backdrop, appearance]);
-
-  useEffect(() => {
-    if (!settings) return;
-    void api.setPreviewVisible(showPreview);
-  }, [settings, showPreview]);
 
   useEffect(() => {
     const unlisten = on<Backdrop>('clipdeck:backdrop', (effective) => {
@@ -119,7 +139,7 @@ export default function App() {
       } else if (modifier && key === 'e' && selectedId) {
         event.preventDefault();
         if (!showPreview) {
-          setShowPreview(true);
+          void setShowPreview(true);
           window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipdeck:edit-selected')), 0);
         } else {
           window.dispatchEvent(new CustomEvent('clipdeck:edit-selected'));
@@ -145,7 +165,7 @@ export default function App() {
         });
       } else if (modifier && event.shiftKey && key === 'p') {
         event.preventDefault();
-        setShowPreview(!showPreview);
+        void setShowPreview(!showPreview);
       } else if (modifier && event.shiftKey && event.key === 'Delete') {
         event.preventDefault();
         void api.confirm(
@@ -180,11 +200,20 @@ export default function App() {
     toggleFavorite,
   ]);
 
+  const frameClasses = [
+    'app-frame',
+    `is-${mode}`,
+    showPreview ? '' : 'preview-is-hidden',
+    mode === 'quick' && opening ? 'is-opening' : '',
+  ].filter(Boolean).join(' ');
+
   return (
     <div
-      className={`app-frame ${showPreview ? '' : 'preview-is-hidden'}`}
+      className={frameClasses}
       role="application"
-      aria-label="Clipdeck clipboard history"
+      aria-label={
+        mode === 'quick' ? 'Clipdeck quick clipboard' : 'Clipdeck clipboard history'
+      }
     >
       <aside className="history-pane" aria-label="Clipboard history">
         <SearchBar />
@@ -194,10 +223,12 @@ export default function App() {
       {showPreview && (
         <main className="content-pane">
           <PreviewPane />
-          {showDetails && <DetailsTable />}
+          {/* The flyout shows a preview, not a metadata table: the details grid
+              belongs to the full application where there is room for it. */}
+          {mode === 'full' && showDetails && <DetailsTable />}
         </main>
       )}
-      <CommandPalette />
+      {mode === 'full' && <CommandPalette />}
       <ToastSurface />
     </div>
   );

@@ -367,6 +367,12 @@ pub enum ImageCompression {
     Manual,
 }
 
+/// Default accelerator for the decorated application window. Deliberately
+/// distinct from the quick palette so the two actions never collide.
+fn default_full_window_hotkey() -> String {
+    "Ctrl+Alt+Shift+V".to_string()
+}
+
 fn default_image_quality() -> u8 {
     80
 }
@@ -378,8 +384,13 @@ pub struct Settings {
     /// Settings schema version used for one-time behavioral migrations.
     #[serde(default = "default_settings_version")]
     pub settings_version: u32,
-    /// Global hotkey in Tauri accelerator syntax, e.g. `Ctrl+Shift+V`.
+    /// Global hotkey that toggles the frameless quick clipboard palette, in
+    /// Tauri accelerator syntax, e.g. `Ctrl+Shift+V`.
     pub hotkey: String,
+    /// Global hotkey that opens the full, decorated Clipdeck application
+    /// window. Must never equal [`Settings::hotkey`].
+    #[serde(default = "default_full_window_hotkey")]
+    pub full_window_hotkey: String,
     /// Maximum number of non-favorite entries retained. 0 disables pruning.
     pub max_items: u32,
     /// Delete non-favorite entries older than this many days. 0 disables.
@@ -424,8 +435,16 @@ pub struct Settings {
     pub paste_on_enter: bool,
     /// Launch Clipdeck when Windows starts.
     pub launch_at_login: bool,
-    /// Show the preview pane.
+    /// Show the preview pane in the **full application** window.
+    ///
+    /// The quick palette has its own independent preference below; a single
+    /// shared flag would let one window resize the other.
     pub show_preview: bool,
+    /// Quick palette compact (`false`) versus expanded (`true`) layout.
+    ///
+    /// Fresh installs start compact so the flyout stays list-only.
+    #[serde(default)]
+    pub quick_preview_expanded: bool,
     /// Share clipboard history with trusted devices discovered on the local network.
     #[serde(default)]
     pub sync_enabled: bool,
@@ -451,6 +470,7 @@ impl Default for Settings {
             // user process, so we default to the de-facto convention used by
             // third-party clipboard managers on Windows.
             hotkey: "Ctrl+Shift+V".to_string(),
+            full_window_hotkey: default_full_window_hotkey(),
             max_items: 10_000,
             retention_days: 0,
             capture_images: true,
@@ -470,6 +490,7 @@ impl Default for Settings {
             paste_on_enter: true,
             launch_at_login: false,
             show_preview: false,
+            quick_preview_expanded: false,
             sync_enabled: false,
             sync_device_id: default_device_id(),
             sync_device_name: default_device_name(),
