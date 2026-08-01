@@ -56,6 +56,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "target/release/WebView2Loader.dll": "WebView2Loader.dll"
+    },
     "shortDescription": "Blazing fast clipboard history for Windows",
     "longDescription": "Clipdeck keeps everything you copy — text, links, colors, images and files — and puts it one keystroke away. Native Windows 11 look, instant search, zero telemetry.",
     "copyright": "Copyright © 2026 Clipdeck",
