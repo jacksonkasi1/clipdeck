@@ -45,12 +45,19 @@ jobs:
           components: clippy, rustfmt
           targets: ${{ env.WINDOWS_TARGET }}
 
+      - name: Cache Rust workspace
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ env.WINDOWS_TARGET }}
+          cache-targets: true
+          cache-on-failure: true
+
       - name: Install frontend dependencies
         run: npm ci --no-audit
 
-      - name: Build frontend
-        run: npm run build
-
+      # Tauri runs npm run build once via build.beforeBuildCommand. Keeping the
+      # command in tauri.conf.json preserves local `tauri build` behavior.
       - name: Test frontend
         run: npm test
 
@@ -92,12 +99,13 @@ jobs:
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -OutputDirectory "artifacts/windows-x64"
 
-      - name: Upload the tested installer and startup screenshot
+      - name: Upload the tested installer and startup screenshots
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
-            artifacts/windows-x64/${{ steps.collect.outputs.screenshot }}
+            artifacts/windows-x64/${{ steps.collect.outputs.main_screenshot }}
+            artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}
           if-no-files-found: error
           retention-days: 14

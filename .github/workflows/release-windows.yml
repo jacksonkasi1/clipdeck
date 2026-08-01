@@ -44,6 +44,14 @@ jobs:
           components: clippy, rustfmt
           targets: ${{ env.WINDOWS_TARGET }}
 
+      - name: Cache Rust workspace
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ env.WINDOWS_TARGET }}
+          cache-targets: true
+          cache-on-failure: true
+
       - name: Install frontend dependencies
         run: npm ci --no-audit
 
@@ -62,9 +70,8 @@ jobs:
             throw "Version mismatch: package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
           }
 
-      - name: Build frontend
-        run: npm run build
-
+      # Tauri runs npm run build once via build.beforeBuildCommand. Keeping the
+      # command in tauri.conf.json preserves local `tauri build` behavior.
       - name: Test frontend
         run: npm test
 
