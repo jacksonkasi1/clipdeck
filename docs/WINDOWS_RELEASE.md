@@ -1,54 +1,48 @@
 # Windows validation and release
 
 Clipdeck's authoritative release environment is a GitHub-hosted Windows runner
-using `x86_64-pc-windows-msvc`. The only public distribution assets for 0.2.1
-are named exactly:
+using `x86_64-pc-windows-msvc`. The only public Windows distribution asset is:
 
 - `Clipdeck_0.2.1_x64-setup.exe`
-- `Clipdeck_0.2.1_portable_x64.zip`
 
-A raw build executable renamed as a "portable" executable is **not** a portable
-package. That was the previous release mistake: it omitted the payload layout,
-portable instructions, and any dynamically required loader. Never upload
-`clipdeck.exe` or a renamed raw executable to a GitHub release.
+Portable publication is disabled. Do not upload a raw executable or portable ZIP
+until that package can automatically install WebView2 when the runtime is absent.
+Users must never be sent to a browser to install a runtime manually.
+
+## WebView2 policy
+
+Installed builds rely on Tauri's NSIS configuration in `tauri.conf.json`:
+
+```json
+"webviewInstallMode": { "type": "downloadBootstrapper" }
+```
+
+The application does not perform a handwritten registry preflight and does not
+block Tauri startup. The installer is responsible for detecting and installing
+Microsoft Edge WebView2 Runtime before Clipdeck starts.
 
 ## What CI verifies
 
-A successful Windows CI/release run builds the frontend, tests and lints Rust,
-builds the NSIS installer, and then runs `collect-windows-artifacts.ps1`. The
-collector:
+A successful Windows CI/release run builds and tests the frontend, formats,
+lints, and tests Rust, builds the NSIS installer, then runs
+`collect-windows-artifacts.ps1`. The collector:
 
-1. obtains Cargo's exact target directory (including configured or explicit
-   `CARGO_TARGET_DIR`) and uses the exact target-triple release path;
-2. checks `package.json`, `Cargo.toml`, `tauri.conf.json`, `Cargo.lock`, and the
-   release tag version;
-3. rejects missing/empty outputs and non-x64 PE executable/DLL payloads;
-4. examines the executable's PE imports and includes the x64
-   `WebView2Loader.dll` only when it is dynamically required;
-5. starts with clean output/staging directories and creates one `Clipdeck/`
-   root, rejecting extra or nested paths;
-6. unzips the completed archive, revalidates the exact payload, and starts
-   `Clipdeck.exe` from that extracted directory; and
-7. uploads only the installer and portable ZIP, preserving them as separate
-   assets.
+1. resolves Cargo's exact target directory and release target triple;
+2. validates the version in package, Tauri, Cargo manifest, and lock files;
+3. rejects missing, empty, oversized, or non-x64 build outputs;
+4. starts from an empty artifact directory and copies the exact NSIS installer;
+5. silently uninstalls an existing Clipdeck installation, if present;
+6. silently installs the newly built installer;
+7. resolves and launches the installed Start Menu shortcut;
+8. waits for a readiness file written only after the main Tauri webview has
+   completed initial store boot and React has mounted;
+9. validates the readiness PID, main-window label, and visible main window;
+10. fails if a WebView2 dialog appears or readiness/window creation times out;
+11. captures `Clipdeck_0.2.1_startup.png` from the real Clipdeck window; and
+12. uninstalls the tested build.
 
-The expected archive listing for the MSVC release is:
-
-```text
-Clipdeck/
-Clipdeck/Clipdeck.exe
-Clipdeck/README-portable.txt
-```
-
-If PE imports show that a toolchain dynamically requires the loader, the one
-additional expected entry is:
-
-```text
-Clipdeck/WebView2Loader.dll
-```
-
-No `Clipdeck/Clipdeck/`, raw executable beside `Clipdeck/`, empty loader, or
-other stale file is valid.
+The retained workflow artifact contains the tested installer and startup
+screenshot. Tagged GitHub releases publish only the installer.
 
 ## Local production build
 
@@ -62,53 +56,32 @@ npx tauri build --ci --target x86_64-pc-windows-msvc --bundles nsis
 ./scripts/collect-windows-artifacts.ps1 -TargetTriple x86_64-pc-windows-msvc -ExpectedVersion 0.2.1
 ```
 
-The collector prints both release assets and the extracted ZIP listing. Use
-`-TargetDirectory` only to override Cargo discovery deliberately. A manual
-**Windows Release** dispatch creates a retained release candidate without
-publishing it.
+## Release verification matrix
 
-## WebView2 runtime validation
+Hosted Windows runners normally already contain WebView2. Their fresh Clipdeck
+install and Start Menu test proves the runtime-present path, frontend boot, and
+real main-window creation. It does **not** prove bootstrap installation on a
+runtime-absent machine.
 
-GitHub-hosted Windows runners already have Microsoft Edge WebView2 Runtime.
-Their startup smoke test proves that the extracted payload works with the
-runtime present; it cannot prove the missing-runtime experience. The portable
-README directs users to Microsoft's Evergreen Runtime download. Adding an
-application-owned message box before Tauri initializes requires coordinated
-backend startup work outside packaging files and must not be simulated by the
-packager.
+Before promoting a release, record this additional test on a clean supported
+Windows VM where WebView2 is confirmed absent:
 
-Before promoting a release, perform this clean-VM/manual matrix:
+1. verify Clipdeck is uninstalled;
+2. verify WebView2 Runtime is absent;
+3. run the exact generated `Clipdeck_0.2.1_x64-setup.exe` with network access;
+4. verify the installer obtains WebView2 without opening a browser;
+5. launch Clipdeck from its Start Menu shortcut;
+6. verify the real Clipdeck UI appears; and
+7. record Windows version, resulting WebView2 version, installer SHA-256, and a
+   screenshot/video.
 
-| Machine | Runtime | Package | Expected result |
-|---|---|---|---|
-| Clean Windows 11 x64 VM | Inbox/current | Portable ZIP | Extract and start successfully |
-| Clean supported Windows x64 VM | Absent | Portable ZIP | Startup fails; README provides the Evergreen install path |
-| Same VM after Evergreen install | Current | Portable ZIP | Starts without changing ZIP contents |
-| Clean supported Windows x64 VM | Absent | NSIS installer | Installer downloads/installs runtime, then app starts |
-| Offline managed VM | Predeployed x64 Evergreen | Both | Starts without network access |
+Do not claim the runtime-absent test passed from hosted CI alone. If that clean-VM
+result is unavailable, report it as an explicit release blocker.
 
-Record the Windows version, WebView2 runtime version/absence, package name, and
-result in the release checklist.
-
-## Release procedure and v0.2.0 cleanup
-
-1. Ensure all four version files are 0.2.1 and Windows CI passes on the exact
-   commit.
-2. Create and push annotated tag `v0.2.1`; the workflow also rejects a tag/version
-   mismatch.
-3. Confirm the release contains exactly the two asset names at the top of this
-   document and that the printed ZIP listing matches.
-4. In release notes, call out that 0.2.1 replaces the misleading 0.2.0 raw
-   "portable" executable with a complete ZIP.
-5. Separately and manually remove the obsolete raw portable asset from the
-   v0.2.0 GitHub release (or mark it unsupported) after 0.2.1 is available. Do
-   not automate mutation of the old release from the build workflow.
-
-Windows artifacts remain unsigned unless repository signing is configured;
-users may therefore see a SmartScreen warning.
+Windows artifacts remain unsigned unless repository signing is configured, so
+users may see a SmartScreen warning.
 
 References:
 
-- [Tauri GitHub pipeline guide](https://v2.tauri.app/distribute/pipelines/github/)
 - [Tauri Windows installer guide](https://v2.tauri.app/distribute/windows-installer/)
-- [Microsoft WebView2 distribution](https://developer.microsoft.com/microsoft-edge/webview2/)
+- [Microsoft WebView2 distribution](https://learn.microsoft.com/microsoft-edge/webview2/concepts/distribution)

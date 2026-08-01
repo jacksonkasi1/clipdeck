@@ -21,9 +21,6 @@ pub mod monitor;
 #[cfg(not(test))]
 pub mod paste;
 pub mod source;
-#[cfg(not(test))]
-pub mod webview_runtime;
-
 use windows::core::PCWSTR;
 
 /// Converts a Rust string into a NUL-terminated UTF-16 buffer for Win32 calls.

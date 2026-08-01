@@ -4,7 +4,6 @@ param(
     [string]$TargetDirectory = '',
     [string]$OutputDirectory = 'artifacts/windows-x64',
     [string]$ExpectedVersion = '',
-    [ValidateRange(1, 512)][int]$MaxPortableSizeMb = 32,
     [ValidateRange(1, 512)][int]$MaxInstallerSizeMb = 16,
     [switch]$SkipSmokeTest
 )
@@ -106,7 +105,6 @@ $outputRoot = Resolve-ProjectPath $OutputDirectory
 $releaseRoot = Join-Path $targetRoot "$TargetTriple/release"
 $executablePath = Join-Path $releaseRoot 'clipdeck.exe'
 $installerName = "Clipdeck_${version}_x64-setup.exe"
-$portableName = "Clipdeck_${version}_portable_x64.zip"
 $installerPath = Join-Path $releaseRoot "bundle/nsis/$installerName"
 
 foreach ($path in @($executablePath, $installerPath)) {
@@ -114,81 +112,31 @@ foreach ($path in @($executablePath, $installerPath)) {
         throw "Required non-empty Windows build output was not produced at the exact target path: $path"
     }
 }
-$exeInfo = Get-PeInfo $executablePath
-$loaderRequired = $exeInfo.Imports -contains 'WebView2Loader.dll'
-$loaderPath = Join-Path $releaseRoot 'WebView2Loader.dll'
-if ($loaderRequired) {
-    if (-not (Test-Path -LiteralPath $loaderPath -PathType Leaf) -or (Get-Item $loaderPath).Length -le 0) {
-        throw "Clipdeck.exe dynamically imports WebView2Loader.dll, but a non-empty loader is missing: $loaderPath"
-    }
-    $null = Get-PeInfo $loaderPath
-}
+$null = Get-PeInfo $executablePath
 
-# Always start from empty output and staging trees; a previous raw executable or
-# wrong-architecture loader must never leak into a release.
+# Portable publication is intentionally disabled until Clipdeck can bootstrap
+# WebView2 itself. Installed builds rely on Tauri's NSIS downloadBootstrapper.
 if (Test-Path $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $outputRoot | Out-Null
-$workRoot = Join-Path ([IO.Path]::GetTempPath()) ("clipdeck-package-" + [guid]::NewGuid())
-$stageRoot = Join-Path $workRoot 'stage'
-$clipdeckRoot = Join-Path $stageRoot 'Clipdeck'
-$extractRoot = Join-Path $workRoot 'extract'
-New-Item -ItemType Directory -Path $clipdeckRoot -Force | Out-Null
-try {
-    Copy-Item -LiteralPath $executablePath -Destination (Join-Path $clipdeckRoot 'Clipdeck.exe')
-    if ($loaderRequired) { Copy-Item -LiteralPath $loaderPath -Destination $clipdeckRoot }
-    @"
-Clipdeck $version portable (Windows x64)
-
-Run Clipdeck.exe from this directory. Keep every file in this directory together.
-Clipdeck stores user data in the normal per-user application-data location; deleting
-this folder does not delete that data.
-
-Microsoft Edge WebView2 Runtime is required. Windows 11 normally includes it. If
-Clipdeck does not open, install the Evergreen Runtime from:
-https://developer.microsoft.com/microsoft-edge/webview2/
-
-For managed/offline machines, an administrator can deploy Microsoft's x64 Evergreen
-Standalone Installer before Clipdeck is started.
-"@ | Set-Content -LiteralPath (Join-Path $clipdeckRoot 'README-portable.txt') -Encoding utf8NoBOM
-
-    $portablePath = Join-Path $outputRoot $portableName
-    Compress-Archive -LiteralPath $clipdeckRoot -DestinationPath $portablePath -CompressionLevel Optimal
-    Copy-Item -LiteralPath $installerPath -Destination (Join-Path $outputRoot $installerName)
-
-    Expand-Archive -LiteralPath $portablePath -DestinationPath $extractRoot
-    $entries = @(Get-ChildItem -LiteralPath $extractRoot -Recurse -Force)
-    $top = @(Get-ChildItem -LiteralPath $extractRoot -Force)
-    if ($top.Count -ne 1 -or -not $top[0].PSIsContainer -or $top[0].Name -cne 'Clipdeck') {
-        throw 'Portable ZIP must contain exactly one top-level Clipdeck/ directory.'
-    }
-    $expectedFiles = @('Clipdeck.exe', 'README-portable.txt')
-    if ($loaderRequired) { $expectedFiles += 'WebView2Loader.dll' }
-    $actualFiles = @(Get-ChildItem -LiteralPath (Join-Path $extractRoot 'Clipdeck') -File | ForEach-Object Name | Sort-Object)
-    $nestedDirectories = @(Get-ChildItem -LiteralPath (Join-Path $extractRoot 'Clipdeck') -Directory -Recurse)
-    if ($nestedDirectories.Count -ne 0 -or (Compare-Object ($expectedFiles | Sort-Object) $actualFiles)) {
-        throw "Portable ZIP has missing, unexpected, or nested payload paths. Expected: $($expectedFiles -join ', '); actual: $($actualFiles -join ', ')."
-    }
-    $null = Get-PeInfo (Join-Path $extractRoot 'Clipdeck/Clipdeck.exe')
-    if ($loaderRequired) { $null = Get-PeInfo (Join-Path $extractRoot 'Clipdeck/WebView2Loader.dll') }
-    if (-not $SkipSmokeTest) {
-        & (Join-Path $projectRoot 'scripts/smoke-test-windows.ps1') -Executable (Join-Path $extractRoot 'Clipdeck/Clipdeck.exe') -WorkingDirectory (Join-Path $extractRoot 'Clipdeck')
-    }
-
-    $portableSize = (Get-Item $portablePath).Length
-    $installerOutput = Join-Path $outputRoot $installerName
-    if ($portableSize -gt ([int64]$MaxPortableSizeMb * 1MB)) { throw "Portable ZIP exceeds $MaxPortableSizeMb MB: $portablePath" }
-    if ((Get-Item $installerOutput).Length -gt ([int64]$MaxInstallerSizeMb * 1MB)) { throw "Installer exceeds $MaxInstallerSizeMb MB: $installerOutput" }
-
-    Write-Host "Verified exact release assets for Clipdeck ${version}:"
-    Get-ChildItem -LiteralPath $outputRoot | Format-Table Name, Length
-    Write-Host "Verified portable ZIP payload:"
-    $entries | ForEach-Object { Write-Host ("  " + [IO.Path]::GetRelativePath($extractRoot, $_.FullName).Replace('\', '/')) }
-} finally {
-    if (Test-Path $workRoot) { Remove-Item -LiteralPath $workRoot -Recurse -Force }
+$installerOutput = Join-Path $outputRoot $installerName
+Copy-Item -LiteralPath $installerPath -Destination $installerOutput
+if ((Get-Item $installerOutput).Length -gt ([int64]$MaxInstallerSizeMb * 1MB)) {
+    throw "Installer exceeds $MaxInstallerSizeMb MB: $installerOutput"
 }
+
+$screenshotName = "Clipdeck_${version}_startup.png"
+$screenshotPath = Join-Path $outputRoot $screenshotName
+if (-not $SkipSmokeTest) {
+    & (Join-Path $projectRoot 'scripts/smoke-test-windows.ps1') `
+        -Installer $installerOutput `
+        -Screenshot $screenshotPath
+}
+
+Write-Host "Verified exact release installer for Clipdeck ${version}:"
+Get-ChildItem -LiteralPath $outputRoot | Format-Table Name, Length
 
 if ($env:GITHUB_OUTPUT) {
     "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
     "installer=$installerName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    "portable=$portableName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+    "screenshot=$screenshotName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 }

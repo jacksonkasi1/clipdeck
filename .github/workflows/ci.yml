@@ -92,12 +92,12 @@ jobs:
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -OutputDirectory "artifacts/windows-x64"
 
-      - name: Upload only the tested installer and portable ZIP
+      - name: Upload the tested installer and startup screenshot
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
-            artifacts/windows-x64/${{ steps.collect.outputs.portable }}
+            artifacts/windows-x64/${{ steps.collect.outputs.screenshot }}
           if-no-files-found: error
           retention-days: 14

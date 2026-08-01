@@ -16,6 +16,8 @@ import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
 import { ToastSurface } from './lib/toast';
 
+let readinessSignaled = false;
+
 export default function App() {
   const mode = useStore((s) => s.mode);
   const appearance = useStore((s) => s.appearance);
@@ -43,6 +45,18 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    if (mode !== 'full' || readinessSignaled) return;
+    readinessSignaled = true;
+    // The native smoke test enables this handshake through an environment
+    // variable. Reaching it proves that the main Tauri webview initialized,
+    // initial store boot completed, and React mounted successfully.
+    void api.signalFrontendReady().catch((error: unknown) => {
+      readinessSignaled = false;
+      console.error('Failed to signal Clipdeck frontend readiness', error);
+    });
   }, [mode]);
 
   // The quick palette is a reused webview: it is hidden, not destroyed. Rust

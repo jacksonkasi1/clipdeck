@@ -371,6 +371,40 @@ pub async fn window_mode(window: tauri::WebviewWindow) -> Result<crate::window::
     Ok(crate::window::mode_for_label(window.label()))
 }
 
+/// Test-only startup handshake emitted by the real main webview after React has
+/// mounted and its initial native data loads have settled. In normal launches
+/// `CLIPDECK_READY_FILE` is absent, so this command has no filesystem effect.
+#[tauri::command]
+pub async fn signal_frontend_ready(window: tauri::WebviewWindow) -> Result<()> {
+    let Ok(path) = std::env::var("CLIPDECK_READY_FILE") else {
+        return Ok(());
+    };
+    if window.label() != crate::window::MAIN_LABEL {
+        return Err(Error::Other(
+            "only the main Clipdeck window may signal application readiness".into(),
+        ));
+    }
+
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let payload = serde_json::json!({
+        "frontendReady": true,
+        "windowCreated": true,
+        "windowVisible": window.is_visible()?,
+        "windowLabel": window.label(),
+        "processId": std::process::id(),
+    });
+    let temporary = path.with_extension("tmp");
+    std::fs::write(
+        &temporary,
+        serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
+    )?;
+    std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn show_quick_palette(app: AppHandle) -> Result<()> {
     crate::window::show_quick(&app);

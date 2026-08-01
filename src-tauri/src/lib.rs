@@ -62,9 +62,6 @@ pub struct RegisteredHotkeys {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(not(test))]
 pub fn run() {
-    if !crate::win::webview_runtime::ensure_available() {
-        return;
-    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             // A second launch is the user asking for the application, not the
@@ -105,6 +102,7 @@ pub fn run() {
             commands::open_storage_folder,
             commands::hide_window,
             commands::window_mode,
+            commands::signal_frontend_ready,
             commands::show_quick_palette,
             commands::hide_quick_palette,
             commands::toggle_quick_palette,
@@ -120,6 +118,11 @@ pub fn run() {
         ])
         .setup(|app| {
             bootstrap(app)?;
+            // A normal Start Menu/direct launch must display the application.
+            // Autostart remains tray-only and does not interrupt sign-in.
+            if !std::env::args_os().any(|argument| argument == "--autostart") {
+                window::show_full(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {

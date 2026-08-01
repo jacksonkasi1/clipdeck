@@ -116,13 +116,13 @@ jobs:
             -OutputDirectory "artifacts/windows-x64" `
             -ExpectedVersion $expectedVersion
 
-      - name: Upload only the verified installer and portable ZIP
+      - name: Upload the verified installer and startup screenshot
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
-            artifacts/windows-x64/${{ steps.collect.outputs.portable }}
+            artifacts/windows-x64/${{ steps.collect.outputs.screenshot }}
           if-no-files-found: error
           retention-days: 90
 
@@ -141,30 +141,31 @@ jobs:
           name: clipdeck-windows-x64-${{ needs.build.outputs.version }}
           path: release-assets
 
-      - name: Create or update GitHub release with only the two distribution assets
+      - name: Create or update GitHub release with only the verified installer
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           installer="release-assets/Clipdeck_${RELEASE_VERSION}_x64-setup.exe"
-          portable="release-assets/Clipdeck_${RELEASE_VERSION}_portable_x64.zip"
-          test -s "$installer" && test -s "$portable"
+          screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_startup.png"
+          test -s "$installer" && test -s "$screenshot"
           test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 2
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # A rerun may repair this tag, but it may never retain stale/raw assets.
+            # Portable publication is disabled until it can bootstrap WebView2
+            # automatically. A rerun removes every stale/raw release asset.
             while IFS= read -r asset; do
               case "$asset" in
-                "$(basename "$installer")"|"$(basename "$portable")") ;;
+                "$(basename "$installer")") ;;
                 *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY" ;;
               esac
             done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY")
-            gh release upload "$RELEASE_TAG" "$installer" "$portable" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$RELEASE_TAG" "$installer" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_TAG" "$installer" "$portable" \
+            gh release create "$RELEASE_TAG" "$installer" \
               --verify-tag \
               --generate-notes \
               --title "Clipdeck $RELEASE_VERSION" \
               --repo "$GITHUB_REPOSITORY"
           fi
-          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 2
+          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 1
