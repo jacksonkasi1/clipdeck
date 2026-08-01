@@ -212,7 +212,6 @@ export function CommandPalette() {
                 <span className="command-icon"><Glyph size={17} aria-hidden /></span>
                 <span className="command-copy">
                   <strong>{shortcut.label}</strong>
-                  <small>{shortcut.description}</small>
                 </span>
                 <span className="shortcut-keys" aria-label={shortcutKeys(shortcut).join(' plus ')}>
                   {shortcutKeys(shortcut).map((key) => <kbd key={key}>{key}</kbd>)}

@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory)]
     [string]$Installer,
     [Parameter(Mandatory)]
-    [string]$Screenshot,
+    [string]$MainScreenshot,
+    [Parameter(Mandatory)]
+    [string]$QuickScreenshot,
     [ValidateRange(10, 120)]
     [int]$StartupTimeoutSeconds = 45
 )
@@ -75,6 +77,7 @@ function Get-ClipdeckProcess([string]$ExecutablePath) {
 }
 
 function Save-WindowScreenshot([IntPtr]$Handle, [string]$Path) {
+    # Captures the composed HWND pixels, including native DWM clipping.
     Add-Type -AssemblyName System.Drawing
     if (-not ('ClipdeckSmoke.NativeMethods' -as [type])) {
         Add-Type @'
@@ -90,7 +93,7 @@ namespace ClipdeckSmoke {
     }
     $rect = New-Object ClipdeckSmoke.NativeMethods+RECT
     if (-not [ClipdeckSmoke.NativeMethods]::GetWindowRect($Handle, [ref]$rect)) {
-        throw 'Could not read the Clipdeck main-window bounds for screenshot capture.'
+        throw 'Could not read the Clipdeck window bounds for screenshot capture.'
     }
     $width = $rect.Right - $rect.Left
     $height = $rect.Bottom - $rect.Top
@@ -108,13 +111,87 @@ namespace ClipdeckSmoke {
     }
 }
 
+function Get-VisibleWindow([int]$ProcessId, [string]$Title) {
+    if (-not ('ClipdeckSmoke.WindowMethods' -as [type])) {
+        Add-Type @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+namespace ClipdeckSmoke {
+  public static class WindowMethods {
+    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
+  }
+}
+'@
+    }
+    $match = [IntPtr]::Zero
+    $callback = [ClipdeckSmoke.WindowMethods+EnumWindowsProc]{
+        param([IntPtr]$hwnd, [IntPtr]$parameter)
+        $owner = [uint32]0
+        [void][ClipdeckSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+        if ($owner -eq $ProcessId -and [ClipdeckSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
+            $text = New-Object Text.StringBuilder 256
+            [void][ClipdeckSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
+            if ($text.ToString() -eq $Title) { $script:foundWindow = $hwnd; return $false }
+        }
+        return $true
+    }
+    $script:foundWindow = [IntPtr]::Zero
+    [void][ClipdeckSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
+    return $script:foundWindow
+}
+
+function Assert-ScreenshotContent([string]$Path, [string]$Name) {
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = [Drawing.Bitmap]::FromFile($Path)
+    try {
+        $all = @{}
+        $header = @{}
+        $step = [Math]::Max(2, [Math]::Floor([Math]::Min($bitmap.Width, $bitmap.Height) / 90))
+        for ($y = 0; $y -lt $bitmap.Height; $y += $step) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $step) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $key = '{0},{1},{2}' -f ([int]($pixel.R / 16)), ([int]($pixel.G / 16)), ([int]($pixel.B / 16))
+                $all[$key] = 1 + [int]($all[$key])
+                if ($y -lt [Math]::Min(90, [int]($bitmap.Height / 4))) { $header[$key] = 1 }
+            }
+        }
+        $sampleCount = ($all.Values | Measure-Object -Sum).Sum
+        $largest = ($all.Values | Measure-Object -Maximum).Maximum
+        if ($all.Count -lt 12 -or $header.Count -lt 6 -or ($largest / $sampleCount) -gt 0.98) {
+            throw "$Name screenshot is nearly uniform or its search/header region has no meaningful visual variation."
+        }
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
+function Wait-ForJson([string]$Path, [DateTime]$Deadline) {
+    do {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { }
+        }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    return $null
+}
+
 $installerPath = Resolve-ProjectPath $Installer
-$screenshotPath = Resolve-ProjectPath $Screenshot
+$mainScreenshotPath = Resolve-ProjectPath $MainScreenshot
+$quickScreenshotPath = Resolve-ProjectPath $QuickScreenshot
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw "Clipdeck installer was not found: $installerPath"
 }
 
 $readyFile = Join-Path ([IO.Path]::GetTempPath()) ("clipdeck-ready-" + [guid]::NewGuid() + '.json')
+$quickReadyFile = [IO.Path]::ChangeExtension($readyFile, 'quick.json')
+$quickFocusFile = [IO.Path]::ChangeExtension($readyFile, 'quick-focus.json')
 $oldReadyFile = [Environment]::GetEnvironmentVariable('CLIPDECK_READY_FILE', 'Process')
 try {
     # This deliberately exercises a fresh install even when a prior Clipdeck build
@@ -175,14 +252,77 @@ try {
         throw 'The real visible Clipdeck main window was not created.'
     }
 
-    Save-WindowScreenshot $process.MainWindowHandle $screenshotPath
-    if (-not (Test-Path -LiteralPath $screenshotPath -PathType Leaf) -or (Get-Item $screenshotPath).Length -le 1024) {
-        throw 'Clipdeck startup screenshot was not captured.'
+    Save-WindowScreenshot $process.MainWindowHandle $mainScreenshotPath
+    if (-not (Test-Path -LiteralPath $mainScreenshotPath -PathType Leaf) -or (Get-Item $mainScreenshotPath).Length -le 1024) {
+        throw 'Clipdeck main startup screenshot was not captured.'
     }
-    Write-Host "Verified installed Clipdeck UI from Start Menu (PID $($process.Id)); readiness=$readyFile; screenshot=$screenshotPath"
+    Assert-ScreenshotContent $mainScreenshotPath 'Main window'
+
+    # Ask the already-running installed binary to route a deterministic request
+    # through the single-instance callback and the production readiness gate.
+    Start-Process -FilePath $target -ArgumentList '--show-quick' -Wait
+    $quickDeadline = [DateTime]::UtcNow.AddSeconds(15)
+    $quickReady = Wait-ForJson $quickReadyFile $quickDeadline
+    $quickFocus = Wait-ForJson $quickFocusFile $quickDeadline
+    do {
+        $quickHandle = Get-VisibleWindow $process.Id 'Clipdeck quick clipboard'
+        if ($quickHandle -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $quickDeadline)
+    if (-not $quickReady -or -not $quickReady.frontendReady -or -not $quickReady.searchVisible -or -not $quickReady.layoutVisible) {
+        throw "Quick frontend did not prove that search and layout were rendered: $($quickReady | ConvertTo-Json -Compress)"
+    }
+    if (-not $quickFocus.searchFocused) { throw 'Quick search did not confirm focus after opening.' }
+    if ($quickHandle -eq [IntPtr]::Zero) { throw 'The ready quick window is not visible.' }
+
+    $quickRect = New-Object ClipdeckSmoke.NativeMethods+RECT
+    [void][ClipdeckSmoke.NativeMethods]::GetWindowRect($quickHandle, [ref]$quickRect)
+    $dpi = [Math]::Max(96, [ClipdeckSmoke.WindowMethods]::GetDpiForWindow($quickHandle))
+    $logicalWidth = ($quickRect.Right - $quickRect.Left) * 96 / $dpi
+    $logicalHeight = ($quickRect.Bottom - $quickRect.Top) * 96 / $dpi
+    if ([Math]::Abs($logicalWidth - 560) -gt 40 -or [Math]::Abs($logicalHeight - 620) -gt 40) {
+        throw "Quick window is not near its compact 560x620 size: $([Math]::Round($logicalWidth))x$([Math]::Round($logicalHeight)) logical pixels."
+    }
+
+    $quickStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -16)
+    $quickExStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -20)
+    if (($quickStyle -band 0x00C00000) -ne 0) { throw 'Quick window unexpectedly has caption decorations.' }
+    if (($quickExStyle -band 0x00040000) -ne 0) { throw 'Quick window unexpectedly has an application taskbar style.' }
+
+    $firstQuick = [IO.Path]::ChangeExtension($quickScreenshotPath, 'first.png')
+    Save-WindowScreenshot $quickHandle $firstQuick
+    Assert-ScreenshotContent $firstQuick 'First quick open'
+
+    Start-Process -FilePath $target -ArgumentList '--hide-quick' -Wait
+    $hideDeadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        if ((Get-VisibleWindow $process.Id 'Clipdeck quick clipboard') -eq [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $hideDeadline)
+    if ((Get-VisibleWindow $process.Id 'Clipdeck quick clipboard') -ne [IntPtr]::Zero) {
+        throw 'Quick window did not hide through the deterministic native command.'
+    }
+
+    Remove-Item -LiteralPath $quickFocusFile -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $target -ArgumentList '--show-quick' -Wait
+    $reopenDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    $quickFocus = Wait-ForJson $quickFocusFile $reopenDeadline
+    do {
+        $quickHandle = Get-VisibleWindow $process.Id 'Clipdeck quick clipboard'
+        if ($quickHandle -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 150
+    } while ([DateTime]::UtcNow -lt $reopenDeadline)
+    if ($quickHandle -eq [IntPtr]::Zero -or -not $quickFocus.searchFocused) {
+        throw 'Quick window did not reopen with search focused.'
+    }
+    Save-WindowScreenshot $quickHandle $quickScreenshotPath
+    Assert-ScreenshotContent $quickScreenshotPath 'Reopened quick window'
+    Remove-Item -LiteralPath $firstQuick -Force -ErrorAction SilentlyContinue
+
+    Write-Host "Verified installed Clipdeck main and reusable quick UI (PID $($process.Id)); main=$mainScreenshotPath; quick=$quickScreenshotPath"
 } finally {
     [Environment]::SetEnvironmentVariable('CLIPDECK_READY_FILE', $oldReadyFile, 'Process')
     Stop-ClipdeckProcesses
     Invoke-QuietUninstall
-    Remove-Item -LiteralPath $readyFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $readyFile, $quickReadyFile, $quickFocusFile -Force -ErrorAction SilentlyContinue
 }

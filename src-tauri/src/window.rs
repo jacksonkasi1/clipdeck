@@ -98,6 +98,52 @@ pub fn quick_is_expanded(app: &AppHandle) -> bool {
 /// paste can hand focus back afterwards.
 pub fn show_quick(app: &AppHandle) {
     capture_previous(app);
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+
+    // Store pending before checking ready so a concurrent frontend-ready signal
+    // cannot fall between the two operations and lose the user's first hotkey.
+    state
+        .quick_open_pending
+        .store(true, std::sync::atomic::Ordering::Release);
+    if !state
+        .quick_frontend_ready
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        log::info!("quick open queued while frontend loads");
+        return;
+    }
+    if state
+        .quick_open_pending
+        .swap(false, std::sync::atomic::Ordering::AcqRel)
+    {
+        show_ready_quick(app);
+    }
+}
+
+/// Marks one warm webview ready and fulfils a queued first-open request.
+pub fn frontend_ready(app: &AppHandle, label: &str) {
+    if label != QUICK_LABEL {
+        log::info!("{label} frontend ready");
+        return;
+    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    state
+        .quick_frontend_ready
+        .store(true, std::sync::atomic::Ordering::Release);
+    log::info!("quick frontend ready");
+    if state
+        .quick_open_pending
+        .swap(false, std::sync::atomic::Ordering::AcqRel)
+    {
+        show_ready_quick(app);
+    }
+}
+
+fn show_ready_quick(app: &AppHandle) {
     let Some(window) = quick(app) else {
         log::error!("quick palette window is missing");
         return;
@@ -108,25 +154,44 @@ pub fn show_quick(app: &AppHandle) {
         .map(|state| *state.foreground.lock())
         .unwrap_or(0);
 
+    log::info!("showing ready quick window");
     layout_quick(&window, expanded, foreground);
+    if let Some(state) = app.try_state::<AppState>() {
+        let settings = state.settings.read().clone();
+        let system = crate::win::appearance::read();
+        crate::native_appearance::apply_window(&window, &settings, &system);
+    }
     let _ = window.set_always_on_top(true);
     let _ = window.show();
     let _ = window.set_focus();
-    // Tells the webview to replay its open transition and focus the search field.
+    // Emitted only after readiness, positioning, material setup, show, and focus.
     let _ = app.emit_to(QUICK_LABEL, "clipdeck:quick-opened", ());
 }
 
 pub fn hide_quick(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state
+            .quick_open_pending
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
     if let Some(window) = quick(app) {
         let _ = window.hide();
     }
 }
 
 pub fn toggle_quick(app: &AppHandle) {
+    let pending = app
+        .try_state::<AppState>()
+        .map(|state| {
+            state
+                .quick_open_pending
+                .load(std::sync::atomic::Ordering::Acquire)
+        })
+        .unwrap_or(false);
     let visible = quick(app)
         .and_then(|window| window.is_visible().ok())
         .unwrap_or(false);
-    if visible {
+    if visible || pending {
         hide_quick(app);
     } else {
         show_quick(app);

@@ -116,13 +116,14 @@ jobs:
             -OutputDirectory "artifacts/windows-x64" `
             -ExpectedVersion $expectedVersion
 
-      - name: Upload the verified installer and startup screenshot
+      - name: Upload the verified installer and main/quick screenshots
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
-            artifacts/windows-x64/${{ steps.collect.outputs.screenshot }}
+            artifacts/windows-x64/${{ steps.collect.outputs.main_screenshot }}
+            artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}
           if-no-files-found: error
           retention-days: 90
 
@@ -148,9 +149,10 @@ jobs:
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
           installer="release-assets/Clipdeck_${RELEASE_VERSION}_x64-setup.exe"
-          screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_startup.png"
-          test -s "$installer" && test -s "$screenshot"
-          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 2
+          main_screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_main-startup.png"
+          quick_screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_quick-startup.png"
+          test -s "$installer" && test -s "$main_screenshot" && test -s "$quick_screenshot"
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 3
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             # Portable publication is disabled until it can bootstrap WebView2
             # automatically. A rerun removes every stale/raw release asset.

@@ -371,21 +371,30 @@ pub async fn window_mode(window: tauri::WebviewWindow) -> Result<crate::window::
     Ok(crate::window::mode_for_label(window.label()))
 }
 
-/// Test-only startup handshake emitted by the real main webview after React has
-/// mounted and its initial native data loads have settled. In normal launches
-/// `CLIPDECK_READY_FILE` is absent, so this command has no filesystem effect.
+/// Per-window handshake emitted only after React, search/layout, and listeners
+/// are ready. Quick open requests are fulfilled before the optional smoke-test
+/// payload is written, so native visibility can never outrun the web surface.
 #[tauri::command]
-pub async fn signal_frontend_ready(window: tauri::WebviewWindow) -> Result<()> {
-    let Ok(path) = std::env::var("CLIPDECK_READY_FILE") else {
-        return Ok(());
-    };
-    if window.label() != crate::window::MAIN_LABEL {
+pub async fn signal_frontend_ready(
+    window: tauri::WebviewWindow,
+    search_visible: bool,
+    layout_visible: bool,
+) -> Result<()> {
+    if !search_visible || !layout_visible {
         return Err(Error::Other(
-            "only the main Clipdeck window may signal application readiness".into(),
+            "frontend readiness requires a visible search field and layout".into(),
         ));
     }
+    crate::window::frontend_ready(window.app_handle(), window.label());
 
-    let path = std::path::PathBuf::from(path);
+    let Ok(base_path) = std::env::var("CLIPDECK_READY_FILE") else {
+        return Ok(());
+    };
+    let mut path = std::path::PathBuf::from(base_path);
+    if window.label() != crate::window::MAIN_LABEL {
+        let extension = format!("{}.json", window.label());
+        path.set_extension(extension);
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -394,6 +403,8 @@ pub async fn signal_frontend_ready(window: tauri::WebviewWindow) -> Result<()> {
         "windowCreated": true,
         "windowVisible": window.is_visible()?,
         "windowLabel": window.label(),
+        "searchVisible": search_visible,
+        "layoutVisible": layout_visible,
         "processId": std::process::id(),
     });
     let temporary = path.with_extension("tmp");
@@ -402,6 +413,29 @@ pub async fn signal_frontend_ready(window: tauri::WebviewWindow) -> Result<()> {
         serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
     )?;
     std::fs::rename(temporary, path)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn signal_quick_search_focused(window: tauri::WebviewWindow) -> Result<()> {
+    if window.label() != crate::window::QUICK_LABEL {
+        return Ok(());
+    }
+    log::info!("quick search focus confirmed");
+    let Ok(base_path) = std::env::var("CLIPDECK_READY_FILE") else {
+        return Ok(());
+    };
+    let mut path = std::path::PathBuf::from(base_path);
+    path.set_extension("quick-focus.json");
+    let payload = serde_json::json!({
+        "searchFocused": true,
+        "windowLabel": window.label(),
+        "processId": std::process::id(),
+    });
+    std::fs::write(
+        path,
+        serde_json::to_vec(&payload).map_err(|error| Error::Other(error.to_string()))?,
+    )?;
     Ok(())
 }
 
@@ -500,46 +534,15 @@ fn persist_quick_preview(
     Ok(())
 }
 
-/// Grows or shrinks the **full application** window around its preview column,
-/// leaving the user's chosen height untouched.
-fn resize_full_for_preview(window: &tauri::WebviewWindow, value: bool) -> Result<()> {
+/// Keeps the full application freely resizable. Preview visibility is a user
+/// preference; the frontend temporarily collapses the pane below 780px without
+/// rewriting that preference or forcing the window back to a desktop size.
+fn resize_full_for_preview(window: &tauri::WebviewWindow, _value: bool) -> Result<()> {
     use tauri::{LogicalSize, Size};
 
-    const FULL_MIN_WIDTH_WITH_PREVIEW: f64 = 920.0;
-    const FULL_MIN_WIDTH_LIST_ONLY: f64 = 420.0;
-    const FULL_MIN_HEIGHT: f64 = 600.0;
-
-    let current = window
-        .inner_size()
-        .map_err(|error| Error::Other(error.to_string()))?;
-    let scale = window.scale_factor().unwrap_or(1.0).max(0.1);
-    let logical_width = f64::from(current.width) / scale;
-    let logical_height = f64::from(current.height) / scale;
-
-    if value {
-        window
-            .set_min_size(Some(Size::Logical(LogicalSize::new(
-                FULL_MIN_WIDTH_WITH_PREVIEW,
-                FULL_MIN_HEIGHT,
-            ))))
-            .map_err(|error| Error::Other(error.to_string()))?;
-        if logical_width < FULL_MIN_WIDTH_WITH_PREVIEW {
-            window
-                .set_size(LogicalSize::new(
-                    1120.0,
-                    logical_height.max(FULL_MIN_HEIGHT),
-                ))
-                .map_err(|error| Error::Other(error.to_string()))?;
-        }
-    } else {
-        window
-            .set_min_size(Some(Size::Logical(LogicalSize::new(
-                FULL_MIN_WIDTH_LIST_ONLY,
-                FULL_MIN_HEIGHT,
-            ))))
-            .map_err(|error| Error::Other(error.to_string()))?;
-    }
-    Ok(())
+    window
+        .set_min_size(Some(Size::Logical(LogicalSize::new(640.0, 460.0))))
+        .map_err(|error| Error::Other(error.to_string()))
 }
 
 #[tauri::command]

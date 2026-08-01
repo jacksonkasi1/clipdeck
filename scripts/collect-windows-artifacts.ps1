@@ -124,12 +124,15 @@ if ((Get-Item $installerOutput).Length -gt ([int64]$MaxInstallerSizeMb * 1MB)) {
     throw "Installer exceeds $MaxInstallerSizeMb MB: $installerOutput"
 }
 
-$screenshotName = "Clipdeck_${version}_startup.png"
-$screenshotPath = Join-Path $outputRoot $screenshotName
+$mainScreenshotName = "Clipdeck_${version}_main-startup.png"
+$quickScreenshotName = "Clipdeck_${version}_quick-startup.png"
+$mainScreenshotPath = Join-Path $outputRoot $mainScreenshotName
+$quickScreenshotPath = Join-Path $outputRoot $quickScreenshotName
 if (-not $SkipSmokeTest) {
     & (Join-Path $projectRoot 'scripts/smoke-test-windows.ps1') `
         -Installer $installerOutput `
-        -Screenshot $screenshotPath
+        -MainScreenshot $mainScreenshotPath `
+        -QuickScreenshot $quickScreenshotPath
 }
 
 Write-Host "Verified exact release installer for Clipdeck ${version}:"
@@ -138,5 +141,6 @@ Get-ChildItem -LiteralPath $outputRoot | Format-Table Name, Length
 if ($env:GITHUB_OUTPUT) {
     "version=$version" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
     "installer=$installerName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
-    "screenshot=$screenshotName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+    "main_screenshot=$mainScreenshotName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
+    "quick_screenshot=$quickScreenshotName" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8
 }

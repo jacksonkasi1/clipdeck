@@ -14,9 +14,9 @@ export function getListKeyboardAction(
 
   switch (key) {
     case 'ArrowDown':
-      return { type: 'select', index: clampIndex(selectedIndex + 1, itemCount) };
+      return { type: 'select', index: circularListIndex(selectedIndex, 1, itemCount) };
     case 'ArrowUp':
-      return { type: 'select', index: clampIndex(selectedIndex - 1, itemCount) };
+      return { type: 'select', index: circularListIndex(selectedIndex, -1, itemCount) };
     case 'Home':
       return { type: 'select', index: 0 };
     case 'End':
@@ -30,6 +30,18 @@ export function getListKeyboardAction(
     default:
       return null;
   }
+}
+
+export function circularListIndex(
+  selectedIndex: number,
+  delta: -1 | 1,
+  itemCount: number,
+): number {
+  if (itemCount <= 0) return -1;
+  if (selectedIndex < 0 || selectedIndex >= itemCount) {
+    return delta > 0 ? 0 : itemCount - 1;
+  }
+  return (selectedIndex + delta + itemCount) % itemCount;
 }
 
 function clampIndex(index: number, itemCount: number): number {

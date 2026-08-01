@@ -86,6 +86,20 @@ pub fn apply_all(app: &AppHandle, settings: &Settings) -> SystemAppearance {
     system
 }
 
+/// Reapplies the DWM frame after a per-monitor DPI transition.
+#[cfg(not(test))]
+pub fn handle_scale_factor_changed(window: &Window) {
+    let app = window.app_handle();
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let settings = state.settings.read().clone();
+    let system = crate::win::appearance::read();
+    if let Some(webview) = app.get_webview_window(window.label()) {
+        apply_window(&webview, &settings, &system);
+    }
+}
+
 /// Handles an operating-system theme notification. Only System mode follows
 /// the notification; explicit Light and Dark preferences remain fixed.
 #[cfg(not(test))]

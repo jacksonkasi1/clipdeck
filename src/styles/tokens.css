@@ -11,6 +11,8 @@
   --selected: #3a3a3a;
   --pressed: #444444;
   --input: #1c1c1c;
+  --dialog-surface: #242424;
+  --dialog-scrim: rgba(0, 0, 0, 0.26);
 
   /* Quiet neutral list-selection fills. Selection must never use the accent
      colour: a Windows 11 clipboard flyout reads as a calm list, and accent
@@ -96,6 +98,8 @@
   --selected: #e5e5e5;
   --pressed: #dbdbdb;
   --input: #ffffff;
+  --dialog-surface: #ffffff;
+  --dialog-scrim: rgba(0, 0, 0, 0.16);
 
   --row-hover: rgba(0, 0, 0, 0.042);
   --row-selected: rgba(0, 0, 0, 0.072);

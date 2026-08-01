@@ -55,7 +55,9 @@ export const api = {
   openStorageFolder: () => invoke<void>('open_storage_folder'),
   hideWindow: () => invoke<void>('hide_window'),
   windowMode: () => invoke<'quick' | 'full' | 'settings'>('window_mode'),
-  signalFrontendReady: () => invoke<void>('signal_frontend_ready'),
+  signalFrontendReady: (searchVisible: boolean, layoutVisible: boolean) =>
+    invoke<void>('signal_frontend_ready', { searchVisible, layoutVisible }),
+  signalQuickSearchFocused: () => invoke<void>('signal_quick_search_focused'),
   showQuickPalette: () => invoke<void>('show_quick_palette'),
   hideQuickPalette: () => invoke<void>('hide_quick_palette'),
   toggleQuickPalette: () => invoke<void>('toggle_quick_palette'),

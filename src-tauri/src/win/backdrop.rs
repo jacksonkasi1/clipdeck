@@ -21,10 +21,10 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
 };
 
-/// `DWMWA_COLOR_NONE` — suppresses the 1px DWM border so our CSS border is the
-/// only visible edge.
+/// `DWMWA_COLOR_DEFAULT` lets DWM own the top-level edge along with its corner
+/// clipping and shadow. CSS may draw only an inset hairline inside that clip.
 #[cfg(windows)]
-const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
+const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
 
 /// Applies the configured backdrop to a window.
 ///
@@ -78,7 +78,7 @@ pub fn apply_frame(window: &WebviewWindow, dark: bool) {
             DWMWA_WINDOW_CORNER_PREFERENCE,
             &(DWMWCP_ROUND.0 as u32),
         );
-        set_attribute(hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_NONE);
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_DEFAULT);
     }
 }
 

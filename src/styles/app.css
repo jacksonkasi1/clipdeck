@@ -440,6 +440,18 @@ kbd {
   font-size: 11.5px;
 }
 
+.footer-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.footer-nav > span {
+  margin-left: 3px;
+}
+
 .footer-hint {
   display: inline-flex;
   align-items: center;
@@ -946,29 +958,28 @@ kbd {
   z-index: 100;
   inset: 0;
   display: grid;
-  place-items: start center;
-  padding: 76px 20px 20px;
-  background: color-mix(in srgb, var(--window) 62%, transparent);
-  backdrop-filter: blur(10px);
+  place-items: center;
+  padding: 18px;
+  background: var(--dialog-scrim);
 }
 
 .command-palette {
-  width: min(620px, 100%);
-  max-height: min(640px, calc(100vh - 96px));
+  width: min(540px, 100%);
+  max-height: 74vh;
   overflow: hidden;
-  background: var(--pane);
+  background: var(--dialog-surface);
   border: 1px solid var(--border-strong);
-  border-radius: 13px;
-  box-shadow: var(--shadow);
+  border-radius: 11px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.32), 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 .command-palette > header {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) 32px;
+  grid-template-columns: 24px minmax(0, 1fr) 30px;
   align-items: center;
-  gap: 10px;
-  min-height: 64px;
-  padding: 10px 12px;
+  gap: 8px;
+  min-height: 48px;
+  padding: 6px 10px 6px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -976,14 +987,13 @@ kbd {
 .command-icon {
   display: grid;
   place-items: center;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
 }
 
 .command-heading-icon {
-  width: 36px;
-  height: 36px;
+  width: 22px;
+  height: 22px;
 }
 
 .command-palette h2,
@@ -1003,30 +1013,29 @@ kbd {
 }
 
 .command-list {
-  max-height: calc(min(640px, 100vh - 96px) - 64px);
+  max-height: calc(74vh - 48px);
   overflow: auto;
-  padding: 7px;
+  padding: 5px;
 }
 
 .command-row {
   display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  min-height: 47px;
-  padding: 5px 8px;
+  min-height: 40px;
+  padding: 3px 7px;
   text-align: left;
   color: var(--text-secondary);
   background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
+  border: 0;
+  border-radius: 6px;
 }
 
 .command-row:hover:not(:disabled) {
   color: var(--text);
-  background: var(--hover);
-  border-color: var(--border);
+  background: var(--row-hover);
 }
 
 .command-row:disabled {
@@ -1034,8 +1043,8 @@ kbd {
 }
 
 .command-icon {
-  width: 30px;
-  height: 30px;
+  width: 22px;
+  height: 22px;
 }
 
 .command-copy strong,
@@ -1089,6 +1098,33 @@ kbd {
   .preview-text-wrap,
   .link-preview {
     padding: 16px;
+  }
+}
+
+/* Preview preference remains intact below this responsive threshold; only the
+   temporary layout collapses. Expanding the window restores the second pane. */
+@media (max-width: 780px) {
+  .app-frame.is-full {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app-frame.is-full .history-pane {
+    border-right: 0;
+  }
+
+  .app-frame.is-full .content-pane {
+    display: none;
+  }
+
+  .app-frame.is-full .search-settings-button {
+    display: none;
+  }
+}
+
+@media (max-height: 520px) {
+  .app-frame.is-full {
+    --header-h: 40px;
+    --footer-h: 28px;
   }
 }
 
@@ -1899,13 +1935,23 @@ kbd {
    ========================================================================== */
 
 .app-frame.is-quick {
-  grid-template-columns: minmax(0, 42%) minmax(0, 58%);
-  border-radius: 11px;
-  /* A quiet neutral hairline, never a heavy black outline. */
-  border: 1px solid var(--flyout-edge);
+  display: block;
 }
 
-.app-frame.is-quick.preview-is-hidden {
+/* DWM exclusively owns the top-level border, clipping, rounding, and shadow.
+   No CSS radius or outer border competes with the compositor at fractional DPI. */
+
+.quick-content {
+  display: grid;
+  grid-template-columns: minmax(0, 42%) minmax(0, 58%);
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  opacity: 1;
+  transform: none;
+}
+
+.app-frame.is-quick.preview-is-hidden .quick-content {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -1929,27 +1975,21 @@ kbd {
   padding: 3px 4px;
 }
 
-/* Open transition: a single short fade + 6px rise. No spring, no bounce, and
-   no long fade — the palette must feel instant and must not delay the moment
-   the search field becomes usable. */
-.app-frame.is-quick {
-  opacity: 1;
-  transform: none;
-  transition: opacity 110ms cubic-bezier(0.2, 0, 0, 1),
-    transform 110ms cubic-bezier(0.2, 0, 0, 1);
+/* The animation is restartable, bounded, and ends in the CSS default visible
+   state. If JavaScript never removes the class, its final keyframe is still
+   fully opaque; the complete application frame is never hidden. */
+.quick-content.quick-entering {
+  animation: quick-enter 100ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
-.app-frame.is-quick.is-opening {
-  opacity: 0;
-  transform: translateY(6px) scale(0.985);
+@keyframes quick-enter {
+  from { opacity: 0.72; transform: translateY(4px) scale(0.992); }
+  to { opacity: 1; transform: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app-frame.is-quick,
-  .app-frame.is-quick.is-opening {
-    opacity: 1;
-    transform: none;
-    transition: none;
+  .quick-content.quick-entering {
+    animation: none;
   }
 }
 

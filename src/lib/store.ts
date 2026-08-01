@@ -33,6 +33,10 @@ interface State {
   showPreview: boolean;
   showDetails: boolean;
   showCommands: boolean;
+  /** Native listeners and initial requests have completed (successfully or not). */
+  bootstrapped: boolean;
+  /** A recoverable startup error shown in the list instead of a blank surface. */
+  bootError: string | null;
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
@@ -104,7 +108,9 @@ export const useStore = create<State & Actions>((set, get) => ({
   showPreview: false,
   showDetails: true,
   showCommands: false,
-  loading: false,
+  bootstrapped: false,
+  bootError: null,
+  loading: true,
   loadingMore: false,
   hasMore: false,
   nextOffset: 0,
@@ -429,7 +435,7 @@ export async function bootStore() {
   // Subscribe before the initial fetch so a clipboard update that lands while
   // either webview is starting cannot be missed. One failed startup request
   // must not disable all later real-time updates.
-  await Promise.all([
+  const listenerResults = await Promise.allSettled([
     on<ClipItem>('clip-updated', () => void refresh()),
     on<string>('clip-touched', () => void refresh()),
     on<Settings>('settings-updated', (settings) => {
@@ -445,6 +451,16 @@ export async function bootStore() {
       useStore.getState().applyAppearance(appearance);
     }),
   ]);
+  const listenerFailure = listenerResults.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  // This is the runtime readiness boundary: React is mounted and native event
+  // listeners are installed. Initial data may still be loading, which is why
+  // ItemList has a visible loading state and readiness never waits on API data.
+  useStore.setState({
+    bootstrapped: true,
+    bootError: listenerFailure ? String(listenerFailure.reason) : null,
+  });
 
   const syncAppearance = async () => {
     try {
@@ -454,12 +470,19 @@ export async function bootStore() {
       console.error('Failed to read system appearance', error);
     }
   };
-  await Promise.allSettled([
-    refresh(),
+  const loadResults = await Promise.allSettled([
+    useStore.getState().refresh(),
     useStore.getState().loadSettings(),
     useStore.getState().loadSyncState(),
     syncAppearance(),
   ]);
+  const loadFailure = loadResults.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  );
+  useStore.setState((state) => ({
+    bootError: state.bootError ?? (loadFailure ? String(loadFailure.reason) : null),
+    loading: false,
+  }));
   window.addEventListener('focus', () => void syncAppearance());
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void syncAppearance();

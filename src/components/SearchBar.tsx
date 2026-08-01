@@ -89,10 +89,19 @@ export function SearchBar() {
     const focusSearch = () => {
       ref.current?.focus();
       ref.current?.select();
+      if (mode === 'quick') {
+        window.setTimeout(() => {
+          if (document.activeElement === ref.current) {
+            void api.signalQuickSearchFocused().catch((error: unknown) => {
+              console.error('Failed to confirm quick search focus', error);
+            });
+          }
+        }, 0);
+      }
     };
     window.addEventListener('clipdeck:focus-search', focusSearch);
     return () => window.removeEventListener('clipdeck:focus-search', focusSearch);
-  }, []);
+  }, [mode]);
 
   // The header *is* the search field, so a click anywhere in its empty area
   // has to land in the input. Buttons keep their own behaviour.

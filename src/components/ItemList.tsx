@@ -4,7 +4,7 @@ import type { CSSProperties } from 'react';
 // ** import lib
 import { useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Clipboard, SearchX } from 'lucide-react';
+import { AlertCircle, Clipboard, LoaderCircle, SearchX } from 'lucide-react';
 
 import { useStore } from '../lib/store';
 import { getShortcutLabel } from '../lib/platform';
@@ -29,6 +29,7 @@ export function ItemList() {
   const selectRange = useStore((s) => s.selectRange);
   const search = useStore((s) => s.search);
   const loading = useStore((s) => s.loading);
+  const bootError = useStore((s) => s.bootError);
   const loadingMore = useStore((s) => s.loadingMore);
   const hasMore = useStore((s) => s.hasMore);
   const loadMore = useStore((s) => s.loadMore);
@@ -98,7 +99,19 @@ export function ItemList() {
         }
       }}
     >
-      {items.length === 0 ? (
+      {items.length === 0 && loading ? (
+        <div className="empty-state is-loading" role="status">
+          <span className="empty-state-icon"><LoaderCircle className="is-spinning" size={24} aria-hidden /></span>
+          <strong>Loading clipboard history…</strong>
+          <span>Search is ready while Clipdeck connects to your history.</span>
+        </div>
+      ) : items.length === 0 && bootError ? (
+        <div className="empty-state" role="status">
+          <span className="empty-state-icon"><AlertCircle size={24} aria-hidden /></span>
+          <strong>Clipboard history could not be loaded</strong>
+          <span>Clipdeck is still usable. Press F5 to try again.</span>
+        </div>
+      ) : items.length === 0 ? (
         <EmptyState search={search} />
       ) : (
         <div

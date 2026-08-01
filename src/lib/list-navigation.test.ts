@@ -8,8 +8,16 @@ describe('getListKeyboardAction', () => {
     expect(getListKeyboardAction('ArrowDown', -1, 4, true)).toEqual({ type: 'select', index: 0 });
   });
 
-  it('keeps navigation inside the available rows', () => {
-    expect(getListKeyboardAction('ArrowUp', 0, 4, true)).toEqual({ type: 'select', index: 0 });
+  it('wraps arrow navigation continuously at both ends', () => {
+    expect(getListKeyboardAction('ArrowDown', 3, 4, true)).toEqual({ type: 'select', index: 0 });
+    expect(getListKeyboardAction('ArrowUp', 0, 4, true)).toEqual({ type: 'select', index: 3 });
+  });
+
+  it('selects the last row on ArrowUp without an existing selection', () => {
+    expect(getListKeyboardAction('ArrowUp', -1, 4, true)).toEqual({ type: 'select', index: 3 });
+  });
+
+  it('keeps page and absolute navigation inside the available rows', () => {
     expect(getListKeyboardAction('PageDown', 2, 4, true)).toEqual({ type: 'select', index: 3 });
     expect(getListKeyboardAction('End', 1, 4, true)).toEqual({ type: 'select', index: 3 });
   });

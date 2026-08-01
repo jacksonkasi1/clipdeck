@@ -49,6 +49,10 @@ pub struct AppState {
     /// Whether the quick palette is pinned. Read by the native focus-lost
     /// handler, so it cannot live in React state.
     pub quick_pinned: std::sync::atomic::AtomicBool,
+    /// Set only after the quick React shell, search field, and listeners exist.
+    pub quick_frontend_ready: std::sync::atomic::AtomicBool,
+    /// Coalesces any number of startup hotkeys into one reveal after readiness.
+    pub quick_open_pending: std::sync::atomic::AtomicBool,
 }
 
 /// The currently registered accelerators for the two global actions.
@@ -63,10 +67,17 @@ pub struct RegisteredHotkeys {
 #[cfg(not(test))]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            // A second launch is the user asking for the application, not the
-            // transient flyout.
-            window::show_full(app);
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // `--show-quick` is also the deterministic installed-build smoke
+            // command. It travels through the same readiness-gated native path
+            // as the global shortcut and never creates another webview.
+            if argv.iter().any(|argument| argument == "--show-quick") {
+                window::show_quick(app);
+            } else if argv.iter().any(|argument| argument == "--hide-quick") {
+                window::hide_quick(app);
+            } else {
+                window::show_full(app);
+            }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -103,6 +114,7 @@ pub fn run() {
             commands::hide_window,
             commands::window_mode,
             commands::signal_frontend_ready,
+            commands::signal_quick_search_focused,
             commands::show_quick_palette,
             commands::hide_quick_palette,
             commands::toggle_quick_palette,
@@ -120,7 +132,10 @@ pub fn run() {
             bootstrap(app)?;
             // A normal Start Menu/direct launch must display the application.
             // Autostart remains tray-only and does not interrupt sign-in.
-            if !std::env::args_os().any(|argument| argument == "--autostart") {
+            let arguments = std::env::args_os().collect::<Vec<_>>();
+            if arguments.iter().any(|argument| argument == "--show-quick") {
+                window::show_quick(app.handle());
+            } else if !arguments.iter().any(|argument| argument == "--autostart") {
                 window::show_full(app.handle());
             }
             Ok(())
@@ -137,6 +152,9 @@ pub fn run() {
                 }
                 WindowEvent::Focused(focused) => {
                     window::handle_focus_changed(window, *focused);
+                }
+                WindowEvent::ScaleFactorChanged { .. } => {
+                    native_appearance::handle_scale_factor_changed(window);
                 }
                 WindowEvent::ThemeChanged(theme) => {
                     native_appearance::handle_system_theme_changed(window, *theme);
@@ -202,6 +220,8 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         hotkeys: parking_lot::Mutex::new(RegisteredHotkeys::default()),
         foreground: parking_lot::Mutex::new(0),
         quick_pinned: std::sync::atomic::AtomicBool::new(false),
+        quick_frontend_ready: std::sync::atomic::AtomicBool::new(false),
+        quick_open_pending: std::sync::atomic::AtomicBool::new(false),
     };
     app.manage(state);
 

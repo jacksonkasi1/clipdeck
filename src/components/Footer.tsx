@@ -1,7 +1,8 @@
 // ** import lib
-import { CornerDownLeft, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, CornerDownLeft, Trash2, X } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { circularListIndex } from '../lib/list-navigation';
 import { useStore } from '../lib/store';
 
 /**
@@ -17,11 +18,18 @@ export function Footer() {
   const selectedId = useStore((s) => s.selectedId);
   const items = useStore((s) => s.items);
   const select = useStore((s) => s.select);
+  const selectOnly = useStore((s) => s.selectOnly);
   const selectedIds = useStore((s) => s.selectedIds);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const pasteOnEnter = useStore((s) => s.settings?.pasteOnEnter ?? true);
   const hasSelection = items.some((item) => item.id === selectedId);
   const primaryVerb = pasteOnEnter ? 'Paste' : 'Copy';
+  const selectedIndex = items.findIndex((item) => item.id === selectedId);
+  const moveSelection = (delta: -1 | 1) => {
+    const index = circularListIndex(selectedIndex, delta, items.length);
+    const item = items[index];
+    if (item) selectOnly(item.id);
+  };
 
   if (selectedIds.length > 1) {
     return (
@@ -46,10 +54,30 @@ export function Footer() {
 
   return (
     <footer className="history-footer" aria-label="Keyboard actions">
-      <span className="footer-hint">
-        <kbd aria-label="Up and down arrows">↑↓</kbd>
-        <span>Navigate</span>
-      </span>
+      {mode === 'full' ? (
+        <span className="footer-nav" aria-label="Navigate clipboard history">
+          <IconButton
+            label="Previous item"
+            disabled={items.length === 0}
+            onClick={() => moveSelection(-1)}
+          >
+            <ArrowUp size={14} aria-hidden />
+          </IconButton>
+          <IconButton
+            label="Next item"
+            disabled={items.length === 0}
+            onClick={() => moveSelection(1)}
+          >
+            <ArrowDown size={14} aria-hidden />
+          </IconButton>
+          <span>Navigate</span>
+        </span>
+      ) : (
+        <span className="footer-hint">
+          <kbd aria-label="Up and down arrows">↑↓</kbd>
+          <span>Navigate</span>
+        </span>
+      )}
       <span className="footer-hint">
         <kbd aria-label="Enter"><CornerDownLeft size={12} aria-hidden /></kbd>
         <span>{hasSelection ? primaryVerb : 'Select an item'}</span>

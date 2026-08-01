@@ -5,13 +5,17 @@ import App from './App';
 import './styles/global.css';
 import { bootStore } from './lib/store';
 
-async function start() {
-  await bootStore();
-  ReactDOM.createRoot(document.getElementById('root')!).render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>,
-  );
-}
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);
 
-void start();
+// Mount the failure-safe shell before touching the native API. A hidden WebView2
+// can be slow to service IPC during startup, but search, chrome, and a loading
+// state must already exist before Rust is ever allowed to reveal it.
+window.setTimeout(() => {
+  void bootStore().catch((error: unknown) => {
+    console.error('Clipdeck startup failed', error);
+  });
+}, 0);

@@ -22,6 +22,7 @@ export default function App() {
   const mode = useStore((s) => s.mode);
   const appearance = useStore((s) => s.appearance);
   const settings = useStore((s) => s.settings);
+  const bootstrapped = useStore((s) => s.bootstrapped);
   const showPreview = useStore((s) => s.showPreview);
   const showDetails = useStore((s) => s.showDetails);
   const showCommands = useStore((s) => s.showCommands);
@@ -39,24 +40,12 @@ export default function App() {
   const deleteItem = useStore((s) => s.deleteItem);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const clearHistory = useStore((s) => s.clearHistory);
-  // Drives the short open transition. Reset on every quick invocation so the
-  // palette animates in again instead of appearing already settled.
-  const [opening, setOpening] = useState(mode === 'quick');
+  // The shell is visible by default. This class only restarts a bounded inner
+  // animation after Rust confirms the already-rendered quick window was shown.
+  const [quickEntering, setQuickEntering] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
-  }, [mode]);
-
-  useEffect(() => {
-    if (mode !== 'full' || readinessSignaled) return;
-    readinessSignaled = true;
-    // The native smoke test enables this handshake through an environment
-    // variable. Reaching it proves that the main Tauri webview initialized,
-    // initial store boot completed, and React mounted successfully.
-    void api.signalFrontendReady().catch((error: unknown) => {
-      readinessSignaled = false;
-      console.error('Failed to signal Clipdeck frontend readiness', error);
-    });
   }, [mode]);
 
   // The quick palette is a reused webview: it is hidden, not destroyed. Rust
@@ -64,14 +53,19 @@ export default function App() {
   // its transition and put the caret back in the search field.
   useEffect(() => {
     if (mode !== 'quick') return;
+    let fallback: number | undefined;
     const replayOpen = () => {
-      setOpening(true);
-      window.requestAnimationFrame(() => setOpening(false));
+      window.clearTimeout(fallback);
+      setQuickEntering(false);
+      // A timer, rather than requestAnimationFrame, works while WebView2 is
+      // transitioning from hidden to visible. The CSS default remains visible.
+      window.setTimeout(() => setQuickEntering(true), 0);
+      fallback = window.setTimeout(() => setQuickEntering(false), 180);
       window.dispatchEvent(new CustomEvent('clipdeck:focus-search'));
     };
-    replayOpen();
     const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
     return () => {
+      window.clearTimeout(fallback);
       void unlisten.then((fn) => fn());
     };
   }, [mode]);
@@ -214,12 +208,42 @@ export default function App() {
     toggleFavorite,
   ]);
 
+  useEffect(() => {
+    if (!bootstrapped || readinessSignaled) return;
+    const search = document.querySelector<HTMLInputElement>('.search-header input[type="search"]');
+    const layout = document.querySelector<HTMLElement>('.history-pane');
+    const searchVisible = Boolean(search && search.getBoundingClientRect().height > 0);
+    const layoutVisible = Boolean(layout && layout.getBoundingClientRect().height > 0);
+    if (!searchVisible || !layoutVisible) return;
+
+    readinessSignaled = true;
+    void api.signalFrontendReady(searchVisible, layoutVisible).catch((error: unknown) => {
+      readinessSignaled = false;
+      console.error(`Failed to signal ${mode} frontend readiness`, error);
+    });
+  }, [bootstrapped, mode]);
+
   const frameClasses = [
     'app-frame',
     `is-${mode}`,
     showPreview ? '' : 'preview-is-hidden',
-    mode === 'quick' && opening ? 'is-opening' : '',
   ].filter(Boolean).join(' ');
+
+  const clipboardLayout = (
+    <>
+      <aside className="history-pane" aria-label="Clipboard history">
+        <SearchBar />
+        <ItemList />
+        <Footer />
+      </aside>
+      {showPreview && (
+        <main className="content-pane">
+          <PreviewPane />
+          {mode === 'full' && showDetails && <DetailsTable />}
+        </main>
+      )}
+    </>
+  );
 
   return (
     <div
@@ -229,19 +253,14 @@ export default function App() {
         mode === 'quick' ? 'Clipdeck quick clipboard' : 'Clipdeck clipboard history'
       }
     >
-      <aside className="history-pane" aria-label="Clipboard history">
-        <SearchBar />
-        <ItemList />
-        <Footer />
-      </aside>
-      {showPreview && (
-        <main className="content-pane">
-          <PreviewPane />
-          {/* The flyout shows a preview, not a metadata table: the details grid
-              belongs to the full application where there is room for it. */}
-          {mode === 'full' && showDetails && <DetailsTable />}
-        </main>
-      )}
+      {mode === 'quick' ? (
+        <div
+          className={`quick-content ${quickEntering ? 'quick-entering' : ''}`}
+          onAnimationEnd={() => setQuickEntering(false)}
+        >
+          {clipboardLayout}
+        </div>
+      ) : clipboardLayout}
       {mode === 'full' && <CommandPalette />}
       <ToastSurface />
     </div>
