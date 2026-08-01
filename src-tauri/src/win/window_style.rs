@@ -2,7 +2,7 @@
 
 use tauri::WebviewWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST,
+    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
     SET_WINDOW_POS_FLAGS, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
     WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
@@ -28,7 +28,9 @@ pub fn enforce_quick_flyout(window: &WebviewWindow) -> Result<(), String> {
 
         SetWindowPos(
             hwnd,
-            HWND_TOPMOST,
+            // SWP_NOZORDER keeps the current z-order, so no insert-after window
+            // is needed; always-on-top is owned by the caller.
+            None,
             0,
             0,
             0,
