@@ -286,8 +286,15 @@ try {
 
     $quickStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -16)
     $quickExStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -20)
-    if (($quickStyle -band 0x00C00000) -ne 0) { throw 'Quick window unexpectedly has caption decorations.' }
-    if (($quickExStyle -band 0x00040000) -ne 0) { throw 'Quick window unexpectedly has an application taskbar style.' }
+    # WS_CAPTION is the combination WS_BORDER | WS_DLGFRAME. Testing for either
+    # bit alone incorrectly rejects a frameless DWM window that retains only a
+    # border style for resize/shadow behavior.
+    if (($quickStyle -band 0x00C00000) -eq 0x00C00000) {
+        throw ('Quick window unexpectedly has caption decorations (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
+    }
+    if (($quickExStyle -band 0x00040000) -ne 0) {
+        throw ('Quick window unexpectedly has an application taskbar style (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
+    }
 
     $firstQuick = [IO.Path]::ChangeExtension($quickScreenshotPath, 'first.png')
     Save-WindowScreenshot $quickHandle $firstQuick
