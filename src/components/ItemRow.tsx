@@ -1,5 +1,6 @@
 // ** import types
 import type { ClipItem } from '../lib/types';
+import type { MouseEvent } from 'react';
 
 // ** import lib
 import { Star } from 'lucide-react';
@@ -12,22 +13,36 @@ import { useStore } from '../lib/store';
 interface Props {
   item: ClipItem;
   selected: boolean;
+  /** True when the row is part of a multi-selection (highlighted but not the primary row). */
+  multiSelected?: boolean;
   position: number;
   total: number;
-  onSelect: () => void;
+  onSelect: (event: MouseEvent<HTMLDivElement>) => void;
 }
 
-export function ItemRow({ item, selected, position, total, onSelect }: Props) {
+export function ItemRow({
+  item,
+  selected,
+  multiSelected = false,
+  position,
+  total,
+  onSelect,
+}: Props) {
   const toggleFavorite = useStore((s) => s.toggleFavorite);
 
   return (
     <div
       role="option"
       id={`clip-item-${item.id}`}
-      aria-selected={selected}
+      aria-selected={selected || multiSelected}
       aria-posinset={position}
       aria-setsize={total}
-      className={`item-row ${selected ? 'selected' : ''} item-kind-${item.kind}`}
+      className={[
+        'item-row',
+        selected ? 'selected' : '',
+        multiSelected ? 'is-multi-selected' : '',
+        `item-kind-${item.kind}`,
+      ].filter(Boolean).join(' ')}
       title="Double-click to paste"
       onClick={onSelect}
       onDoubleClick={() => {

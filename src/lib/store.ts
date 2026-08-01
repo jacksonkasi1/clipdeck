@@ -10,6 +10,8 @@ import { api, on } from './tauri';
 interface State {
   items: ClipItem[];
   selectedId: number | null;
+  selectedIds: number[];
+  selectionAnchor: number | null;
   search: string;
   activeKinds: ItemKind[];
   favoritesOnly: boolean;
@@ -24,6 +26,12 @@ interface State {
   loadingMore: boolean;
   hasMore: boolean;
   nextOffset: number;
+  /**
+   * Optional override consumed by `refresh()` after a destructive action.
+   * Stores the chosen successor id so the user lands on the same logical row
+   * instead of having the selection jump to the top of the list.
+   */
+  pendingSelection: number | null;
 }
 
 interface Actions {
@@ -33,9 +41,14 @@ interface Actions {
   toggleKind: (kind: ItemKind) => Promise<void>;
   toggleFavoritesOnly: () => Promise<void>;
   select: (id: number | null) => void;
+  selectOnly: (id: number) => void;
+  selectToggle: (id: number) => void;
+  selectRange: (id: number) => void;
+  selectAll: () => void;
   toggleFavorite: (id: number) => Promise<void>;
   editItem: (id: number, content: string) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
+  deleteSelected: () => Promise<void>;
   clearHistory: (includeFavorites: boolean) => Promise<void>;
   clearCategory: (kind: ItemKind, includeFavorites?: boolean) => Promise<void>;
   loadSettings: () => Promise<void>;
@@ -54,6 +67,9 @@ let historyGeneration = 0;
 export const useStore = create<State & Actions>((set, get) => ({
   items: [],
   selectedId: null,
+  selectedIds: [],
+  selectionAnchor: null,
+  pendingSelection: null,
   search: '',
   activeKinds: [],
   favoritesOnly: false,
@@ -88,15 +104,32 @@ export const useStore = create<State & Actions>((set, get) => ({
       const [page, counts] = await Promise.all([api.listItems(query), api.counts()]);
       if (generation !== historyGeneration) return;
       const items = mergeUniquePage([], page);
-      set((s) => ({
-        items,
-        counts,
-        nextOffset: page.length,
-        hasMore: pageMayHaveMore(page.length),
-        selectedId: items.some((i) => i.id === s.selectedId)
+      set((s) => {
+        const override = s.pendingSelection;
+        const fallback = items.some((i) => i.id === s.selectedId)
           ? s.selectedId
-          : (items[0]?.id ?? null),
-      }));
+          : (items[0]?.id ?? null);
+        const nextSelectedId =
+          override !== null && items.some((i) => i.id === override)
+            ? override
+            : fallback;
+        // Re-validate the multi-selection against the now-current items.
+        const validIds = items.map((i) => i.id);
+        const nextSelectedIds = s.selectedIds.filter((id) => validIds.includes(id));
+        if (nextSelectedId !== null && !nextSelectedIds.includes(nextSelectedId)) {
+          nextSelectedIds.unshift(nextSelectedId);
+        }
+        return {
+          items,
+          counts,
+          nextOffset: page.length,
+          hasMore: pageMayHaveMore(page.length),
+          selectedId: nextSelectedId,
+          selectedIds: nextSelectedIds,
+          selectionAnchor: nextSelectedIds.length ? s.selectionAnchor : null,
+          pendingSelection: null,
+        };
+      });
     } finally {
       if (generation === historyGeneration) set({ loading: false });
     }
@@ -139,7 +172,67 @@ export const useStore = create<State & Actions>((set, get) => ({
     await get().refresh();
   },
 
-  select: (id) => set({ selectedId: id }),
+  select: (id) => {
+    if (id === null) {
+      set({ selectedId: null, selectedIds: [], selectionAnchor: null });
+      return;
+    }
+    set({ selectedId: id, selectedIds: [id], selectionAnchor: id });
+  },
+
+  selectOnly: (id) => set({ selectedId: id, selectedIds: [id], selectionAnchor: id }),
+
+  selectToggle: (id) => {
+    const state = get();
+    const isSelected = state.selectedIds.includes(id);
+    const nextSelectedIds = isSelected
+      ? state.selectedIds.filter((existing) => existing !== id)
+      : [...state.selectedIds, id];
+    // When toggling on, anchor follows the new item so a subsequent Shift+arrow
+    // extends from it. When toggling off, keep the existing anchor if it still
+    // points to a selected item — otherwise the just-deselected item would be
+    // silently re-included in the next Shift+arrow range.
+    const nextSelectedId = isSelected
+      ? (nextSelectedIds[nextSelectedIds.length - 1] ?? null)
+      : id;
+    const anchorStillSelected = state.selectionAnchor !== null
+      && nextSelectedIds.includes(state.selectionAnchor);
+    const nextAnchor = isSelected
+      ? (anchorStillSelected ? state.selectionAnchor : id)
+      : id;
+    set({
+      selectedIds: nextSelectedIds,
+      selectedId: nextSelectedId,
+      selectionAnchor: nextAnchor,
+    });
+  },
+
+  selectRange: (id) => {
+    const state = get();
+    const anchor = state.selectionAnchor ?? state.selectedId ?? id;
+    const fromIndex = state.items.findIndex((item) => item.id === anchor);
+    const toIndex = state.items.findIndex((item) => item.id === id);
+    if (fromIndex < 0 || toIndex < 0) {
+      set({ selectedId: id, selectedIds: [id], selectionAnchor: id });
+      return;
+    }
+    const [start, end] = fromIndex < toIndex ? [fromIndex, toIndex] : [toIndex, fromIndex];
+    const rangeIds = state.items.slice(start, end + 1).map((item) => item.id);
+    set({
+      selectedIds: rangeIds,
+      selectedId: id,
+      selectionAnchor: anchor,
+    });
+  },
+
+  selectAll: () => {
+    const ids = get().items.map((item) => item.id);
+    set({
+      selectedIds: ids,
+      selectedId: ids[0] ?? null,
+      selectionAnchor: ids[0] ?? null,
+    });
+  },
 
   toggleFavorite: async (id) => {
     const item = get().items.find((i) => i.id === id);
@@ -154,7 +247,59 @@ export const useStore = create<State & Actions>((set, get) => ({
   },
 
   deleteItem: async (id) => {
+    const items = get().items;
+    const index = items.findIndex((item) => item.id === id);
+    // Prefer the row that will occupy the deleted position next; fall back
+    // to the previous row if the deleted item was last, otherwise nothing.
+    const successor = index >= 0 ? items[index + 1] ?? items[index - 1] ?? null : null;
+    // Hold the successor in a closure so a concurrent `clip-updated` event
+    // (which fires `refresh()` and clears `pendingSelection`) can't overwrite
+    // the destination before our final refresh runs.
+    const preserveSuccessor = () => set({ pendingSelection: successor?.id ?? null });
+    preserveSuccessor();
     await api.deleteItem(id);
+    await get().refresh();
+    preserveSuccessor();
+    await get().refresh();
+  },
+
+  deleteSelected: async () => {
+    const ids = get().selectedIds;
+    if (ids.length === 0) return;
+    const items = get().items;
+    const lastIndex = items.reduce(
+      (max, item, currentIndex) => (ids.includes(item.id) ? currentIndex : max),
+      -1,
+    );
+    const successor = lastIndex >= 0
+      ? items
+          .slice(lastIndex + 1)
+          .find((item) => !ids.includes(item.id)) ?? items.slice(0, lastIndex).reverse().find((item) => !ids.includes(item.id)) ?? null
+      : null;
+    const preserveSuccessor = () => set({ pendingSelection: successor?.id ?? null });
+    preserveSuccessor();
+    const failed: number[] = [];
+    for (const id of ids) {
+      try {
+        await api.deleteItem(id);
+      } catch (error) {
+        console.error('Failed to delete item', id, error);
+        failed.push(id);
+      }
+    }
+    if (failed.length > 0) {
+      try {
+        const { toast } = await import('./toast');
+        toast(
+          `Couldn't delete ${failed.length} item${failed.length === 1 ? '' : 's'} — see console.`,
+          'error',
+        );
+      } catch {
+        // Toast surface is optional — never let a UI affordance block a delete.
+      }
+    }
+    await get().refresh();
+    preserveSuccessor();
     await get().refresh();
   },
 

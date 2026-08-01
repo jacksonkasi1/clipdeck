@@ -10,7 +10,10 @@ import { ItemRow } from './ItemRow';
 export function ItemList() {
   const items = useStore((s) => s.items);
   const selectedId = useStore((s) => s.selectedId);
-  const select = useStore((s) => s.select);
+  const selectedIds = useStore((s) => s.selectedIds);
+  const selectOnly = useStore((s) => s.selectOnly);
+  const selectToggle = useStore((s) => s.selectToggle);
+  const selectRange = useStore((s) => s.selectRange);
   const search = useStore((s) => s.search);
   const loading = useStore((s) => s.loading);
   const loadingMore = useStore((s) => s.loadingMore);
@@ -48,13 +51,16 @@ export function ItemList() {
     return () => scrollElement.removeEventListener('scroll', loadNearEnd);
   }, [hasMore, items.length, loadMore, loadingMore]);
 
+  const selectedSet = new Set(selectedIds);
+
   return (
     <div
       ref={parentRef}
-      className="item-list"
+      className={`item-list ${selectedIds.length > 1 ? 'is-multiselect' : ''}`}
       role="listbox"
       tabIndex={0}
       aria-label="Clipboard entries"
+      aria-multiselectable={selectedIds.length > 1}
       aria-busy={loading || loadingMore}
       aria-activedescendant={selectedId !== null ? `clip-item-${selectedId}` : undefined}
     >
@@ -87,10 +93,13 @@ export function ItemList() {
                 <ItemRow
                   item={item}
                   selected={item.id === selectedId}
+                  multiSelected={selectedIds.length > 1 && selectedSet.has(item.id)}
                   position={row.index + 1}
                   total={hasMore ? -1 : items.length}
-                  onSelect={() => {
-                    select(item.id);
+                  onSelect={(event) => {
+                    if (event.shiftKey) selectRange(item.id);
+                    else if (event.ctrlKey || event.metaKey) selectToggle(item.id);
+                    else selectOnly(item.id);
                     parentRef.current?.focus({ preventScroll: true });
                   }}
                 />
