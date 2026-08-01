@@ -161,6 +161,18 @@ fn show_ready_quick(app: &AppHandle) {
         let system = crate::win::appearance::read();
         crate::native_appearance::apply_window(&window, &settings, &system);
     }
+    // Applying Acrylic can recreate non-client styles on Windows. Reassert the
+    // flyout contract after material setup and before reveal so the warm quick
+    // window never acquires a normal caption or taskbar button.
+    if let Err(error) = window.set_decorations(false) {
+        log::warn!("could not remove quick-window decorations: {error}");
+    }
+    if let Err(error) = window.set_resizable(false) {
+        log::warn!("could not lock quick-window resizing: {error}");
+    }
+    if let Err(error) = window.set_skip_taskbar(true) {
+        log::warn!("could not remove quick window from taskbar: {error}");
+    }
     let _ = window.set_always_on_top(true);
     let _ = window.show();
     let _ = window.set_focus();
