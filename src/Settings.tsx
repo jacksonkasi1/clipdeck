@@ -1,6 +1,6 @@
 // ** import types
-import type { ReactNode } from 'react';
-import type { Backdrop, FileFilterMode, ImageCompression, ImageFormat, ItemKind, Settings as SettingsType, ThemeMode } from './lib/types';
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
+import type { ApplicationInfo, Backdrop, FileFilterMode, IgnoredApp, ImageCompression, ImageFormat, ItemKind, Settings as SettingsType, ThemeMode } from './lib/types';
 
 // ** import utils
 import { formatBytes } from './lib/formatting';
@@ -8,13 +8,15 @@ import { shortcutFromKeyEvent, shortcutRecorderKeyAction } from './lib/global-sh
 import { mutationErrorMessage } from './lib/mutation-error';
 
 // ** import lib
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Database,
   FileImage,
   Files,
   AppWindow,
   Archive,
+  Check,
+  CircleAlert,
   FolderOpen,
   HardDrive,
   Keyboard,
@@ -22,6 +24,7 @@ import {
   Mail,
   Monitor,
   Palette,
+  Search,
   Save,
   Settings2,
   Star,
@@ -29,15 +32,15 @@ import {
   Trash2,
   Type,
   Wifi,
+  X,
 } from 'lucide-react';
 
 import { DeviceBadge } from './components/DeviceBadge';
 import { useStore } from './lib/store';
-import { api } from './lib/tauri';
+import { api, fileSrc } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { applyTheme } from './lib/theme';
-import { toast } from './lib/toast';
 
 const HISTORY_KINDS = [
   { key: 'text', kind: 'text', label: 'Text', icon: Type },
@@ -53,7 +56,7 @@ type SettingsCategory = 'appearance' | 'capture' | 'history' | 'sync' | 'shortcu
 const SETTINGS_CATEGORIES = [
   { id: 'appearance', label: 'Appearance', icon: Monitor },
   { id: 'capture', label: 'Capture', icon: Database },
-  { id: 'history', label: 'History & storage', icon: HardDrive },
+  { id: 'history', label: 'History and storage', icon: HardDrive },
   { id: 'sync', label: 'Cross-device sync', icon: Wifi },
   { id: 'shortcuts', label: 'Keyboard shortcuts', icon: Keyboard },
   { id: 'advanced', label: 'Advanced', icon: Settings2 },
@@ -72,7 +75,8 @@ export default function Settings() {
   const clearCategory = useStore((state) => state.clearCategory);
   const changeStorageLocation = useStore((state) => state.changeStorageLocation);
   const regeneratePairingCode = useStore((state) => state.regeneratePairingCode);
-  const [local, setLocal] = useState<SettingsType | null>(settings);
+  const [local, setLocal] = useState<SettingsType | null>(() => settings ? normaliseSettings(settings) : null);
+  const dirtyRef = useRef(false);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('appearance');
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -80,8 +84,8 @@ export default function Settings() {
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (settings && !local) setLocal(settings);
-  }, [settings, local]);
+    if (settings && !dirtyRef.current) setLocal(normaliseSettings(settings));
+  }, [settings]);
 
   useEffect(() => {
     applyTheme(local?.theme ?? 'system', appearance);
@@ -104,6 +108,7 @@ export default function Settings() {
   if (!local) return <SettingsLoading />;
 
   const update = <Key extends keyof SettingsType>(key: Key, value: SettingsType[Key]) => {
+    dirtyRef.current = true;
     setSaved(false);
     setMutationError(null);
     setLocal({ ...local, [key]: value });
@@ -114,7 +119,13 @@ export default function Settings() {
     setMutationError(null);
     setSaving(true);
     try {
-      await saveSettings(local);
+      const next = await saveSettings({
+        ...local,
+        fileIncludeExtensions: normaliseExtensions(local.fileIncludeExtensions.join(',')),
+        fileExcludeExtensions: normaliseExtensions(local.fileExcludeExtensions.join(',')),
+      });
+      dirtyRef.current = false;
+      setLocal(normaliseSettings(next));
       setSaved(true);
     } catch (error) {
       setMutationError(mutationErrorMessage('Settings could not be saved.', error));
@@ -704,17 +715,36 @@ function TextInput({ value, onChange }: { value: string; onChange: (value: strin
   );
 }
 
-function ExtensionInput({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+export function ExtensionInput({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
   const aria = useRowAria();
+  const [draft, setDraft] = useState(value.join(', '));
+  const editing = useRef(false);
+
+  useEffect(() => {
+    if (!editing.current) setDraft(value.join(', '));
+  }, [value]);
+
+  const commit = () => {
+    editing.current = false;
+    const next = normaliseExtensions(draft);
+    setDraft(next.join(', '));
+    onChange(next);
+  };
+
   return (
     <input
       className="text-field extension-field"
       type="text"
       aria-labelledby={aria.labelledBy}
       aria-describedby={aria.describedBy}
-      value={value.join(', ')}
+      value={draft}
       placeholder=".txt, .pdf"
-      onChange={(event) => onChange(normaliseExtensions(event.target.value))}
+      onFocus={() => { editing.current = true; }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+      }}
     />
   );
 }
@@ -723,34 +753,256 @@ export function normaliseExtensions(value: string): string[] {
   return [...new Set(value.split(/[\s,;]+/).map((extension) => extension.trim().toLowerCase()).filter(Boolean).map((extension) => extension.startsWith('.') ? extension : `.${extension}`))];
 }
 
-function IgnoredApplications({ value, onChange }: { value: string[]; onChange: (value: string[]) => void }) {
+function IgnoredApplications({ value, onChange }: { value: IgnoredApp[]; onChange: (value: IgnoredApp[]) => void }) {
   const aria = useRowAria();
-  const add = async () => {
-    try {
-      const selected = await api.chooseApplications();
-      const paths = typeof selected === 'string' ? [selected] : (selected ?? []);
-      onChange([...new Set([...value, ...paths])]);
-    } catch (error) {
-      toast(`Application picker could not open: ${String(error)}`, 'error');
-    }
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const close = () => {
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
   };
   return (
     <div className="ignored-apps" aria-labelledby={aria.labelledBy} aria-describedby={aria.describedBy}>
-      <div className="ignored-app-list">
-        {value.map((path) => (
-          <span className="ignored-app-chip" key={path} title={path}>
-            <AppWindow size={13} aria-hidden /> {baseName(path)}
-            <button type="button" aria-label={`Remove ${baseName(path)}`} onClick={() => onChange(value.filter((item) => item !== path))}>×</button>
+      <div className="ignored-app-list" aria-label="Selected ignored applications">
+        {value.map((app) => (
+          <span className="ignored-app-chip" key={identityKey(app)} title={app.executablePath}>
+            <ApplicationIcon app={app} />
+            <span>{app.displayName}</span>
+            <button type="button" aria-label={`Remove ${app.displayName}`} onClick={() => onChange(value.filter((item) => identityKey(item) !== identityKey(app)))}>
+              <X size={12} aria-hidden />
+            </button>
           </span>
         ))}
       </div>
-      <button type="button" className="secondary-button" onClick={() => void add()}><AppWindow size={15} aria-hidden /> Choose apps</button>
+      <button ref={triggerRef} type="button" className="secondary-button" onClick={() => setOpen(true)}><AppWindow size={15} aria-hidden /> Choose applications</button>
+      {open && <ApplicationPicker selected={value} onClose={close} onConfirm={(apps) => { onChange(apps); close(); }} />}
     </div>
   );
 }
 
+let applicationCache: ApplicationInfo[] | null = null;
+let applicationRequest: Promise<ApplicationInfo[]> | null = null;
+
+export function clearApplicationDiscoveryCache() {
+  applicationCache = null;
+  applicationRequest = null;
+  iconCache.clear();
+}
+
+export function dedupeApplications(apps: ApplicationInfo[]): ApplicationInfo[] {
+  const merged = new Map<string, ApplicationInfo>();
+  for (const app of apps) {
+    const key = identityKey(app);
+    const existing = merged.get(key);
+    merged.set(key, existing ? {
+      ...existing,
+      ...app,
+      iconPath: app.iconPath ?? existing.iconPath,
+      publisher: app.publisher ?? existing.publisher,
+      running: existing.running || app.running,
+      installed: existing.installed || app.installed,
+      recentlyUsed: Boolean(existing.recentlyUsed || app.recentlyUsed),
+    } : app);
+  }
+  return [...merged.values()].sort((a, b) =>
+    Number(b.running) - Number(a.running)
+    || Number(Boolean(b.recentlyUsed)) - Number(Boolean(a.recentlyUsed))
+    || a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }));
+}
+
+async function discoverApplications(refresh = false): Promise<ApplicationInfo[]> {
+  if (refresh) {
+    applicationCache = null;
+    applicationRequest = null;
+  }
+  if (applicationCache) return applicationCache;
+  if (!applicationRequest) {
+    applicationRequest = Promise.all([api.listRunningApps(), api.listInstalledApps()])
+      .then(([running, installed]) => {
+        applicationCache = dedupeApplications([...running, ...installed]);
+        return applicationCache;
+      })
+      .finally(() => { applicationRequest = null; });
+  }
+  return applicationRequest;
+}
+
+export function ApplicationPicker({ selected, onClose, onConfirm }: {
+  selected: IgnoredApp[];
+  onClose: () => void;
+  onConfirm: (apps: IgnoredApp[]) => void;
+}) {
+  const [apps, setApps] = useState<ApplicationInfo[]>(applicationCache ?? []);
+  const [chosen, setChosen] = useState<IgnoredApp[]>(selected);
+  const [query, setQuery] = useState('');
+  const [loading, setLoading] = useState(!applicationCache);
+  const [error, setError] = useState<string | null>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  const load = async (refresh = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setApps(await discoverApplications(refresh));
+    } catch (loadError) {
+      setError(mutationErrorMessage('Applications could not be loaded.', loadError));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    searchRef.current?.focus();
+  }, []);
+
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    if (!needle) return apps;
+    return apps.filter((app) => [app.displayName, app.publisher, app.executableName, app.executablePath]
+      .some((part) => part?.toLocaleLowerCase().includes(needle)));
+  }, [apps, query]);
+
+  useEffect(() => {
+    setActiveIndex((index) => Math.min(index, Math.max(0, filtered.length - 1)));
+  }, [filtered.length]);
+
+  const toggle = (app: IgnoredApp) => {
+    const key = identityKey(app);
+    setChosen((current) => current.some((item) => identityKey(item) === key)
+      ? current.filter((item) => identityKey(item) !== key)
+      : [...current, app]);
+  };
+
+  const browse = async () => {
+    setError(null);
+    try {
+      const picked = await api.chooseApplications();
+      const paths = typeof picked === 'string' ? [picked] : (picked ?? []);
+      const identities = await Promise.all(paths.map((path) => api.resolveApplicationIdentity(path)));
+      setChosen((current) => dedupeIgnored([...current, ...identities]));
+    } catch (browseError) {
+      setError(mutationErrorMessage('The application could not be added.', browseError));
+    }
+  };
+
+  const handleKeys = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onClose();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      setActiveIndex((index) => filtered.length ? (index + direction + filtered.length) % filtered.length : 0);
+    } else if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
+      event.preventDefault();
+      onConfirm(chosen);
+    } else if (event.key === 'Tab') {
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? [])];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && document.activeElement === first && last) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last && first) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  };
+
+  return (
+    <div className="application-picker-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div ref={dialogRef} className="application-picker" role="dialog" aria-modal="true" aria-labelledby="application-picker-title" onKeyDown={handleKeys}>
+        <header className="application-picker-header">
+          <div><h2 id="application-picker-title">Choose applications</h2><p>Clipboard content copied from selected applications will not be saved.</p></div>
+          <button type="button" className="picker-icon-button" aria-label="Close application picker" onClick={onClose}><X size={18} aria-hidden /></button>
+        </header>
+        <div className="application-picker-tools">
+          <label className="application-search"><Search size={16} aria-hidden /><span className="sr-only">Search applications</span><input ref={searchRef} type="search" placeholder="Search applications" value={query} onChange={(event) => setQuery(event.target.value)} aria-controls="application-results" aria-activedescendant={filtered[activeIndex] ? `application-${safeId(identityKey(filtered[activeIndex]))}` : undefined} /></label>
+          <button type="button" className="secondary-button" disabled={loading} onClick={() => void load(true)}><RefreshCw size={14} aria-hidden /> Refresh</button>
+        </div>
+        {chosen.length > 0 && <div className="picker-selection" aria-label={`${chosen.length} selected applications`}>
+          {chosen.map((app) => <button type="button" key={identityKey(app)} className="selected-app-card" title={`Remove ${app.displayName}`} onClick={() => toggle(app)}><ApplicationIcon app={app} /><span>{app.displayName}</span><X size={12} aria-hidden /></button>)}
+        </div>}
+        <div id="application-results" className="application-results" role="listbox" aria-label="Applications" aria-multiselectable="true">
+          {loading && apps.length === 0 && <PickerState icon={<RefreshCw className="is-spinning" size={22} />} title="Finding applications…" detail="Looking at installed and currently running applications." />}
+          {!loading && error && apps.length === 0 && <PickerState icon={<CircleAlert size={22} />} title="Applications could not be loaded" detail={error}><button type="button" className="secondary-button" onClick={() => void load(true)}>Try again</button></PickerState>}
+          {!loading && !error && filtered.length === 0 && <PickerState icon={<Search size={22} />} title={query ? 'No applications match your search' : 'No applications found'} detail={query ? 'Try a different name, publisher, or executable.' : 'Use Browse to choose an executable directly.'} />}
+          {filtered.map((app, index) => {
+            const checked = chosen.some((item) => identityKey(item) === identityKey(app));
+            return <button id={`application-${safeId(identityKey(app))}`} key={identityKey(app)} type="button" role="option" aria-selected={checked} className={`application-option ${index === activeIndex ? 'is-active' : ''}`} onMouseEnter={() => setActiveIndex(index)} onClick={() => toggle(app)}>
+              <ApplicationIcon app={app} />
+              <span className="application-option-copy"><strong>{app.displayName}</strong><span>{[app.publisher, app.executablePath].filter(Boolean).join(' · ')}</span></span>
+              <span className="application-statuses">{app.running && <span className="app-status is-running">Running</span>}{app.recentlyUsed && !app.running && <span className="app-status">Recent</span>}{app.installed && !app.running && <span className="app-status">Installed</span>}</span>
+              <span className={`application-check ${checked ? 'is-checked' : ''}`}>{checked && <Check size={13} aria-hidden />}</span>
+            </button>;
+          })}
+        </div>
+        {error && apps.length > 0 && <p className="application-picker-error" role="status">{error}</p>}
+        <footer className="application-picker-footer">
+          <button type="button" className="secondary-button picker-browse" onClick={() => void browse()}><FolderOpen size={15} aria-hidden /> Browse for an executable</button>
+          <span className="picker-selection-count">{chosen.length} selected</span>
+          <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+          <button type="button" className="primary-button" onClick={() => onConfirm(chosen)}>Confirm selection</button>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function PickerState({ icon, title, detail, children }: { icon: ReactNode; title: string; detail: string; children?: ReactNode }) {
+  return <div className="picker-state">{icon}<strong>{title}</strong><span>{detail}</span>{children}</div>;
+}
+
+const iconCache = new Map<string, string | null>();
+
+function ApplicationIcon({ app }: { app: Pick<IgnoredApp, 'displayName' | 'iconPath' | 'executablePath'> }) {
+  const [icon, setIcon] = useState<string | null>(app.iconPath ?? iconCache.get(app.executablePath) ?? null);
+  useEffect(() => {
+    if (app.iconPath || iconCache.has(app.executablePath)) return;
+    let active = true;
+    void api.extractApplicationIcon(app.executablePath).then((path) => {
+      iconCache.set(app.executablePath, path);
+      if (active) setIcon(path);
+    }).catch(() => { iconCache.set(app.executablePath, null); });
+    return () => { active = false; };
+  }, [app.executablePath, app.iconPath]);
+  return <span className="application-icon">{icon ? <img src={fileSrc(icon)} alt="" /> : <AppWindow size={17} aria-hidden />}<span className="sr-only">{app.displayName}</span></span>;
+}
+
+function identityKey(app: Pick<IgnoredApp, 'id' | 'packageFamilyName' | 'appUserModelId' | 'executablePath'>): string {
+  return (app.packageFamilyName || app.appUserModelId || app.id || app.executablePath).toLocaleLowerCase();
+}
+
+function dedupeIgnored(apps: IgnoredApp[]): IgnoredApp[] {
+  return [...new Map(apps.map((app) => [identityKey(app), app])).values()];
+}
+
+function safeId(value: string): string {
+  return value.replace(/[^a-z0-9_-]/gi, '-');
+}
+
 function baseName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+function normaliseSettings(settings: SettingsType): SettingsType {
+  const legacyApps = settings.ignoredApps as unknown as Array<IgnoredApp | string>;
+  return {
+    ...settings,
+    ignoredApps: dedupeIgnored(legacyApps.map((app) => typeof app === 'string' ? {
+      id: app.toLocaleLowerCase(),
+      displayName: baseName(app).replace(/\.exe$/i, ''),
+      executablePath: app,
+      executableName: baseName(app),
+      appUserModelId: null,
+      packageFamilyName: null,
+      iconPath: null,
+    } : app)),
+  };
 }
 
 function ColorInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {

@@ -1,8 +1,10 @@
 // ** import types
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import type {
+  ApplicationInfo,
   ClipItem,
   Counts,
+  IgnoredApp,
   FlavorBundle,
   ItemKind,
   ListQuery,
@@ -57,6 +59,12 @@ export const api = {
   syncState: () => invoke<SyncState>('sync_state'),
   regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   quitApp: () => invoke<void>('quit_app'),
+  listInstalledApps: () => invoke<ApplicationInfo[]>('list_installed_apps'),
+  listRunningApps: () => invoke<ApplicationInfo[]>('list_running_apps'),
+  resolveApplicationIdentity: (executablePath: string) =>
+    invoke<IgnoredApp>('resolve_application_identity', { executablePath }),
+  extractApplicationIcon: (executablePath: string) =>
+    invoke<string | null>('extract_application_icon', { executablePath }),
   chooseStorageFolder: () => open({ directory: true, multiple: false }),
   chooseApplications: () => open({
     directory: false,

@@ -54,7 +54,7 @@ interface Actions {
   clearCategory: (kind: ItemKind, includeFavorites?: boolean) => Promise<void>;
   loadSettings: () => Promise<void>;
   loadSyncState: () => Promise<void>;
-  saveSettings: (settings: Settings) => Promise<void>;
+  saveSettings: (settings: Settings) => Promise<Settings>;
   regeneratePairingCode: () => Promise<void>;
   changeStorageLocation: (path: string) => Promise<Settings>;
   setShowPreview: (show: boolean) => void;
@@ -358,6 +358,7 @@ export const useStore = create<State & Actions>((set, get) => ({
     const next = await api.saveSettings(settings);
     set({ settings: next, showPreview: next.showPreview });
     await get().loadSyncState();
+    return next;
   },
 
   regeneratePairingCode: async () => {

@@ -112,6 +112,23 @@ export interface Counts {
   storageBytes: number;
 }
 
+export interface IgnoredApp {
+  id: string;
+  displayName: string;
+  executablePath: string;
+  executableName: string;
+  appUserModelId?: string | null;
+  packageFamilyName?: string | null;
+  iconPath?: string | null;
+}
+
+export interface ApplicationInfo extends IgnoredApp {
+  publisher?: string | null;
+  running: boolean;
+  installed: boolean;
+  recentlyUsed?: boolean;
+}
+
 export interface Settings {
   settingsVersion: number;
   hotkey: string;
@@ -128,7 +145,7 @@ export interface Settings {
   imageCompression: ImageCompression;
   imageQuality: number;
   storagePath: string | null;
-  ignoredApps: string[];
+  ignoredApps: IgnoredApp[];
   backdrop: Backdrop;
   theme: ThemeMode;
   pasteOnEnter: boolean;
