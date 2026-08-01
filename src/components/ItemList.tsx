@@ -1,3 +1,6 @@
+// ** import types
+import type { CSSProperties } from 'react';
+
 // ** import lib
 import { useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -7,7 +10,17 @@ import { useStore } from '../lib/store';
 import { getShortcutLabel } from '../lib/platform';
 import { ItemRow } from './ItemRow';
 
+/**
+ * Row heights, in px, shared by the virtualizer and the stylesheet.
+ *
+ * The value is published to CSS as `--row-height` on the scroll container so
+ * the measured height and the painted height cannot drift apart; `.item-row`
+ * in app.css reads it instead of hard-coding a second number.
+ */
+export const ROW_HEIGHT = { quick: 32, full: 40 } as const;
+
 export function ItemList() {
+  const mode = useStore((s) => s.mode);
   const items = useStore((s) => s.items);
   const selectedId = useStore((s) => s.selectedId);
   const selectedIds = useStore((s) => s.selectedIds);
@@ -25,10 +38,12 @@ export function ItemList() {
   // which drew a blue rectangle around the entire scrolling container.
   const [listFocused, setListFocused] = useState(false);
 
+  const rowHeight = ROW_HEIGHT[mode];
+
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 50,
+    estimateSize: () => rowHeight,
     overscan: 8,
   });
 
@@ -61,6 +76,7 @@ export function ItemList() {
     <div
       ref={parentRef}
       className={`item-list ${selectedIds.length > 1 ? 'is-multiselect' : ''}`}
+      style={{ '--row-height': `${rowHeight}px` } as CSSProperties}
       role="listbox"
       tabIndex={0}
       aria-label="Clipboard entries"
@@ -113,6 +129,7 @@ export function ItemList() {
                   selected={item.id === selectedId}
                   multiSelected={selectedIds.length > 1 && selectedSet.has(item.id)}
                   focused={listFocused && item.id === selectedId}
+                  mode={mode}
                   position={row.index + 1}
                   total={hasMore ? -1 : items.length}
                   onSelect={(event) => {

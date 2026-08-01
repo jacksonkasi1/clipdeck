@@ -1,9 +1,17 @@
 // ** import lib
-import { ArrowDown, ArrowUp, CornerDownLeft, Trash2, X } from 'lucide-react';
+import { CornerDownLeft, Trash2, X } from 'lucide-react';
 
 import { IconButton } from './IconButton';
 import { useStore } from '../lib/store';
 
+/**
+ * A low-weight hint strip.
+ *
+ * Both windows now share one footer language: a thin divider, muted text and
+ * small key caps. The full application no longer carries previous/next buttons
+ * — the arrow keys already do that, and two icon buttons in a status strip
+ * made the footer compete with the list above it.
+ */
 export function Footer() {
   const mode = useStore((s) => s.mode);
   const selectedId = useStore((s) => s.selectedId);
@@ -12,82 +20,46 @@ export function Footer() {
   const selectedIds = useStore((s) => s.selectedIds);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const pasteOnEnter = useStore((s) => s.settings?.pasteOnEnter ?? true);
-  const idx = items.findIndex((i) => i.id === selectedId);
-  const item = idx >= 0 ? items[idx] : undefined;
-  const prev = idx > 0 ? items[idx - 1] : undefined;
-  const next = idx >= 0 && idx < items.length - 1 ? items[idx + 1] : undefined;
-
-  const primaryHint = item
-    ? `${pasteOnEnter ? 'Paste' : 'Copy'} selected item`
-    : 'Select an item';
+  const hasSelection = items.some((item) => item.id === selectedId);
+  const primaryVerb = pasteOnEnter ? 'Paste' : 'Copy';
 
   if (selectedIds.length > 1) {
     return (
       <footer className="history-footer selection-footer" aria-label="Selection actions">
-        <strong>{selectedIds.length} items selected</strong>
+        <span>{selectedIds.length} selected</span>
         <div className="footer-spacer" />
         <IconButton label="Clear selection" onClick={() => select(null)}>
-          <X size={16} aria-hidden />
+          <X size={15} aria-hidden />
         </IconButton>
-        <button type="button" className="bulk-delete-button" onClick={() => void deleteSelected()}>
-          <Trash2 size={15} aria-hidden /> Delete selected
-        </button>
-      </footer>
-    );
-  }
-
-  // The flyout is keyboard-first and has no window chrome, so its footer is a
-  // compact hint strip rather than the application's navigation controls.
-  if (mode === 'quick') {
-    return (
-      <footer className="history-footer is-quick" aria-label="Keyboard actions">
-        <span className="footer-hint">
-          <kbd aria-label="Up and down arrows">↑↓</kbd>
-          <span>Navigate</span>
-        </span>
-        <span className="footer-hint">
-          <kbd aria-label="Enter"><CornerDownLeft size={13} aria-hidden /></kbd>
-          <span>{pasteOnEnter ? 'Paste' : 'Copy'}</span>
-        </span>
-        <span className="footer-hint">
-          <kbd>Esc</kbd>
-          <span>Close</span>
-        </span>
-        <div className="footer-spacer" />
-        <span className="footer-hint">
-          <kbd>Ctrl</kbd>
-          <kbd>Shift</kbd>
-          <kbd>P</kbd>
-          <span>Preview</span>
-        </span>
+        {/* A destructive action does not need a filled button in a strip this
+            small; it stays an icon and keeps the danger tint on the glyph. */}
+        <IconButton
+          label={`Delete ${selectedIds.length} selected items`}
+          tone="danger"
+          onClick={() => void deleteSelected()}
+        >
+          <Trash2 size={15} aria-hidden />
+        </IconButton>
       </footer>
     );
   }
 
   return (
     <footer className="history-footer" aria-label="Keyboard actions">
-      <div className="footer-nav">
-        <IconButton
-          label="Previous item"
-          disabled={!prev}
-          onClick={() => prev && select(prev.id)}
-        >
-          <ArrowUp size={16} aria-hidden />
-        </IconButton>
-        <IconButton
-          label="Next item"
-          disabled={!next}
-          onClick={() => next && select(next.id)}
-        >
-          <ArrowDown size={16} aria-hidden />
-        </IconButton>
+      <span className="footer-hint">
+        <kbd aria-label="Up and down arrows">↑↓</kbd>
         <span>Navigate</span>
-      </div>
-      <div className="footer-spacer" />
-      <div className="footer-paste">
-        <kbd aria-label="Enter"><CornerDownLeft size={14} aria-hidden /></kbd>
-        <span>{primaryHint}</span>
-      </div>
+      </span>
+      <span className="footer-hint">
+        <kbd aria-label="Enter"><CornerDownLeft size={12} aria-hidden /></kbd>
+        <span>{hasSelection ? primaryVerb : 'Select an item'}</span>
+      </span>
+      {mode === 'quick' && (
+        <span className="footer-hint">
+          <kbd>Esc</kbd>
+          <span>Close</span>
+        </span>
+      )}
     </footer>
   );
 }

@@ -41,9 +41,22 @@
   --checker-tile: #1d1d1d;
   --accent-foreground: #07151b;
 
-  --radius-control: 8px;
+  --radius-control: 6px;
   --radius-panel: 12px;
   --transition-fast: 130ms cubic-bezier(0.2, 0, 0, 1);
+
+  /* Compact desktop-utility rhythm.
+     Every chrome height in the two clipboard windows comes from here, so the
+     header/list/footer stay on one spacing scale instead of each surface
+     inventing its own padding. Values are deliberately tight: the point of the
+     list is to show clipboard entries, not margins. */
+  --header-h: 44px;
+  --footer-h: 30px;
+  --icon-hit: 30px;
+  --pane-pad-x: 10px;
+  --gap-tight: 2px;
+  --gap-control: 6px;
+  --gap-section: 10px;
 }
 
 /* Native-material windows.

@@ -1,3 +1,7 @@
+// ** import types
+import type { HeaderAction } from '../lib/header-actions';
+import type { MouseEvent } from 'react';
+
 // ** import lib
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -12,6 +16,7 @@ import {
 } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { isSearchActive, visibleHeaderActions } from '../lib/header-actions';
 import { useStore } from '../lib/store';
 import { api } from '../lib/tauri';
 import { toast } from '../lib/toast';
@@ -29,7 +34,11 @@ export function SearchBar() {
   const setShowPreview = useStore((s) => s.setShowPreview);
   const setShowCommands = useStore((s) => s.setShowCommands);
   const [pinned, setPinned] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
+
+  const context = { mode, searchFocused, hasSearchText: search.length > 0 };
+  const actions = visibleHeaderActions(context);
 
   useEffect(() => {
     ref.current?.focus();
@@ -37,24 +46,29 @@ export function SearchBar() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
+      // The event can be retargeted at `window` itself, which has no `matches`.
+      const target = e.target instanceof HTMLElement ? e.target : null;
       if (e.defaultPrevented || target?.matches('textarea, [contenteditable="true"]')) return;
       if (e.key === 'Escape') {
         if (showCommands) return;
-        // In the flyout Escape is an unconditional dismiss. Clearing the search
-        // first would leave a transient popup stranded on screen, which is not
-        // how a Windows flyout behaves. The full application keeps the gentler
-        // clear-then-hide behaviour.
+        // In the flyout Escape is an unconditional dismiss on the first press.
+        // Clearing the search first would leave a transient popup stranded on
+        // screen, which is not how a Windows flyout behaves.
         if (mode === 'quick') {
           e.preventDefault();
           void api.hideWindow();
           return;
         }
+        // The full application is a normal window: Escape is a search-scoped
+        // key that clears the query and then releases focus. It must never
+        // hide the application, because there would be no visible way back
+        // other than the tray.
         if (search) {
           e.preventDefault();
           void setSearch('');
-        } else {
-          void api.hideWindow();
+        } else if (document.activeElement === ref.current) {
+          e.preventDefault();
+          ref.current?.blur();
         }
       }
       if (e.key === 'F5') {
@@ -80,96 +94,118 @@ export function SearchBar() {
     return () => window.removeEventListener('clipdeck:focus-search', focusSearch);
   }, []);
 
-  return (
-    <header className="search-header">
-      <div className="search-field">
-        <Search size={16} strokeWidth={1.9} aria-hidden />
-        <input
-          ref={ref}
-          type="search"
-          placeholder={mode === 'quick' ? 'Search clipboard…' : 'Search content, tags, or application…'}
-          value={search}
-          onChange={(e) => void setSearch(e.target.value)}
-          aria-label="Search clipboard history"
-          aria-describedby="search-results-status"
-          autoComplete="off"
-          spellCheck={false}
-        />
-        <span id="search-results-status" className="sr-only" aria-live="polite">
-          {search
-            ? `${hasMore ? 'At least ' : ''}${visibleCount} search ${visibleCount === 1 ? 'result' : 'results'}`
-            : `${hasMore ? 'At least ' : ''}${visibleCount} clipboard ${visibleCount === 1 ? 'item' : 'items'} visible`}
-        </span>
-      </div>
-      {search && (
-        <IconButton label="Clear search" onClick={() => void setSearch('')}>
-          <X size={16} aria-hidden />
-        </IconButton>
-      )}
-      <IconButton
-        label={pinLabel(mode, pinned)}
-        active={pinned}
-        onClick={() => {
-          const next = !pinned;
-          setPinned(next);
-          // In quick mode pinning also suppresses native light-dismiss, so the
-          // flag has to reach Rust; always-on-top alone would still let the
-          // focus-lost handler hide the palette.
-          const request = mode === 'quick'
-            ? api.setQuickPinned(next)
-            : api.setAlwaysOnTop(next);
-          void request.catch((error: unknown) => {
-            setPinned(!next);
-            toast(`The pin state could not be changed: ${String(error)}`, 'error');
-          });
-        }}
-      >
-        <Pin size={17} aria-hidden />
-      </IconButton>
-      <IconButton
-        label={showPreview ? 'Hide preview pane' : 'Show preview pane'}
-        active={showPreview}
-        onClick={() => void setShowPreview(!showPreview)}
-      >
-        {showPreview ? (
-          <PanelRightClose size={17} aria-hidden />
-        ) : (
-          <PanelRightOpen size={17} aria-hidden />
-        )}
-      </IconButton>
-      {/* The command palette and settings are application-level affordances.
-          They would dominate the flyout's toolbar, so quick mode omits them and
-          exposes settings through the tray and Ctrl+, instead. */}
-      {mode === 'full' && (
-        <>
+  // The header *is* the search field, so a click anywhere in its empty area
+  // has to land in the input. Buttons keep their own behaviour.
+  const focusFromHeader = (event: MouseEvent<HTMLElement>) => {
+    if ((event.target as HTMLElement).closest('button')) return;
+    event.preventDefault();
+    ref.current?.focus();
+  };
+
+  const renderAction = (action: HeaderAction) => {
+    switch (action) {
+      case 'clearSearch':
+        return (
           <IconButton
+            key={action}
+            label="Clear search"
+            className="search-clear-button"
+            onClick={() => {
+              void setSearch('');
+              ref.current?.focus();
+            }}
+          >
+            <X size={15} aria-hidden />
+          </IconButton>
+        );
+      case 'preview':
+        return (
+          <IconButton
+            key={action}
+            label={showPreview ? 'Hide preview pane' : 'Show preview pane'}
+            active={showPreview}
+            onClick={() => void setShowPreview(!showPreview)}
+          >
+            {showPreview ? (
+              <PanelRightClose size={16} aria-hidden />
+            ) : (
+              <PanelRightOpen size={16} aria-hidden />
+            )}
+          </IconButton>
+        );
+      case 'pin':
+        return (
+          <IconButton
+            key={action}
+            label={pinned ? 'Unpin window' : 'Keep window on top'}
+            active={pinned}
+            onClick={() => {
+              const next = !pinned;
+              setPinned(next);
+              void api.setAlwaysOnTop(next).catch((error: unknown) => {
+                setPinned(!next);
+                toast(`The pin state could not be changed: ${String(error)}`, 'error');
+              });
+            }}
+          >
+            <Pin size={16} aria-hidden />
+          </IconButton>
+        );
+      case 'commands':
+        return (
+          <IconButton
+            key={action}
             label={`Commands (${getShortcutLabel('commands')})`}
             onClick={() => setShowCommands(true)}
           >
             {getPlatform() === 'macos' ? (
-              <Command size={17} aria-hidden />
+              <Command size={16} aria-hidden />
             ) : (
-              <SquareTerminal size={17} aria-hidden />
+              <SquareTerminal size={16} aria-hidden />
             )}
           </IconButton>
+        );
+      case 'settings':
+        return (
           <IconButton
+            key={action}
             className="search-settings-button"
             label={`Settings (${getShortcutLabel('settings')})`}
             onClick={() => void api.openSettingsWindow().catch((error: unknown) => {
               toast(`Settings could not be opened: ${String(error)}`, 'error');
             })}
           >
-            <Settings2 size={17} aria-hidden />
+            <Settings2 size={16} aria-hidden />
           </IconButton>
-        </>
-      )}
+        );
+    }
+  };
+
+  return (
+    <header
+      className={`search-header ${isSearchActive(context) ? 'is-search-active' : ''}`}
+      onMouseDown={focusFromHeader}
+    >
+      <Search className="search-glyph" size={15} strokeWidth={1.9} aria-hidden />
+      <input
+        ref={ref}
+        type="search"
+        placeholder={mode === 'quick' ? 'Search clipboard…' : 'Search content, tags, or application…'}
+        value={search}
+        onChange={(e) => void setSearch(e.target.value)}
+        onFocus={() => setSearchFocused(true)}
+        onBlur={() => setSearchFocused(false)}
+        aria-label="Search clipboard history"
+        aria-describedby="search-results-status"
+        autoComplete="off"
+        spellCheck={false}
+      />
+      <span id="search-results-status" className="sr-only" aria-live="polite">
+        {search
+          ? `${hasMore ? 'At least ' : ''}${visibleCount} search ${visibleCount === 1 ? 'result' : 'results'}`
+          : `${hasMore ? 'At least ' : ''}${visibleCount} clipboard ${visibleCount === 1 ? 'item' : 'items'} visible`}
+      </span>
+      {actions.map(renderAction)}
     </header>
   );
-}
-
-function pinLabel(mode: 'quick' | 'full', pinned: boolean): string {
-  if (mode === 'quick') {
-    return pinned ? 'Unpin quick clipboard' : 'Keep quick clipboard open';
-  }
-  return pinned ? 'Unpin window' : 'Keep window on top';
 }
