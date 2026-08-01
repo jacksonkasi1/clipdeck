@@ -173,6 +173,10 @@ fn show_ready_quick(app: &AppHandle) {
     if let Err(error) = window.set_skip_taskbar(true) {
         log::warn!("could not remove quick window from taskbar: {error}");
     }
+    #[cfg(windows)]
+    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+        log::warn!("could not enforce quick-window Win32 styles: {error}");
+    }
     let _ = window.set_always_on_top(true);
     let _ = window.show();
     let _ = window.set_focus();
