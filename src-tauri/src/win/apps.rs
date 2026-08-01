@@ -8,7 +8,10 @@ use std::time::{Duration, Instant};
 use crate::models::{ApplicationInfo, IgnoredApp};
 
 const CACHE_TTL: Duration = Duration::from_secs(30);
-static INSTALLED_CACHE: OnceLock<Mutex<Option<(Instant, Vec<ApplicationInfo>)>>> = OnceLock::new();
+/// Timestamped snapshot of the installed-application scan.
+type InstalledSnapshot = Option<(Instant, Vec<ApplicationInfo>)>;
+
+static INSTALLED_CACHE: OnceLock<Mutex<InstalledSnapshot>> = OnceLock::new();
 
 pub fn resolve(executable_path: &str) -> Option<IgnoredApp> {
     let path = PathBuf::from(executable_path.trim().trim_matches('"'));

@@ -48,6 +48,10 @@ pub fn current_foreground() -> isize {
 /// Rapid hotkey presses can race that capture, so the caller must never store a
 /// Clipdeck HWND as the paste target — doing so would make Enter paste into our
 /// own webview instead of the user's application.
+// The following helpers are only reachable from `cfg(not(test))` modules
+// (`commands`, `window`, `win::apps`). Gating them the same way keeps the
+// portable `cargo test` build free of dead code without `allow` attributes.
+#[cfg(not(test))]
 pub fn is_own_window(hwnd: isize) -> bool {
     use windows::Win32::System::Threading::GetCurrentProcessId;
 
@@ -58,6 +62,7 @@ pub fn is_own_window(hwnd: isize) -> bool {
 }
 
 /// Returns the foreground window, or `None` when it is one of our own windows.
+#[cfg(not(test))]
 pub fn foreground_paste_target() -> Option<isize> {
     let hwnd = current_foreground();
     (hwnd != 0 && !is_own_window(hwnd)).then_some(hwnd)
@@ -192,6 +197,7 @@ fn is_webview_process(path: &Path) -> bool {
         })
 }
 
+#[cfg(not(test))]
 pub(crate) fn is_current_process(path: &str) -> bool {
     let Ok(current) = std::env::current_exe() else {
         return false;
@@ -199,6 +205,7 @@ pub(crate) fn is_current_process(path: &str) -> bool {
     normalize_path(&current) == normalize_path(Path::new(path))
 }
 
+#[cfg(not(test))]
 pub(crate) fn normalize_path(path: &Path) -> String {
     std::fs::canonicalize(path)
         .unwrap_or_else(|_| path.to_path_buf())
