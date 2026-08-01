@@ -16,7 +16,7 @@ import type {
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { confirm, open } from '@tauri-apps/plugin-dialog';
-import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 
 // Thin typed wrappers around native calls. Components never use raw command
 // names, keeping the Rust/TypeScript boundary centralized and type checked.
@@ -30,6 +30,8 @@ export const api = {
     invoke<void>('paste_active', { id, flavor }),
   setFavorite: (id: number, value: boolean) =>
     invoke<void>('set_favorite', { id, value }),
+  setItemTags: (id: number, tags: string[]) =>
+    invoke<ClipItem>('set_item_tags', { id, tags }),
   editItem: (id: number, content: string) =>
     invoke<ClipItem>('edit_item', { id, content }),
   deleteItem: (id: number) => invoke<void>('delete_item', { id }),
@@ -47,6 +49,8 @@ export const api = {
   appearance: () => invoke<SystemAppearance>('appearance'),
   syncNativeAppearance: () => invoke<SystemAppearance>('sync_native_appearance'),
   openSettingsWindow: () => invoke<void>('open_settings_window'),
+  openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
+  openStorageFolder: () => invoke<void>('open_storage_folder'),
   hideWindow: () => invoke<void>('hide_window'),
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
   setPreviewVisible: (value: boolean) => invoke<boolean>('set_preview_visible', { value }),
@@ -54,10 +58,14 @@ export const api = {
   regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   quitApp: () => invoke<void>('quit_app'),
   chooseStorageFolder: () => open({ directory: true, multiple: false }),
+  chooseApplications: () => open({
+    directory: false,
+    multiple: true,
+    filters: [{ name: 'Applications', extensions: ['exe'] }],
+  }),
   confirm: (message: string, title = 'Clipdeck') =>
     confirm(message, { title, kind: 'warning' }),
   revealItem: (path: string) => revealItemInDir(path),
-  openUrl: (url: string) => openUrl(url),
 };
 
 /** Converts an absolute file path into an asset URL available to the webview. */

@@ -3,7 +3,7 @@ import type { ClipItem } from '../lib/types';
 import type { MouseEvent } from 'react';
 
 // ** import lib
-import { Star } from 'lucide-react';
+import { Check, Star } from 'lucide-react';
 
 import { DeviceBadge } from './DeviceBadge';
 import { KindIcon } from './KindIcon';
@@ -29,6 +29,7 @@ export function ItemRow({
   onSelect,
 }: Props) {
   const toggleFavorite = useStore((s) => s.toggleFavorite);
+  const selectToggle = useStore((s) => s.selectToggle);
 
   return (
     <div
@@ -49,6 +50,19 @@ export function ItemRow({
         void import('../lib/tauri').then((m) => m.api.pasteActive(item.id, 'original'));
       }}
     >
+      <button
+        type="button"
+        className={`row-select-check ${selected || multiSelected ? 'is-checked' : ''}`}
+        aria-label={selected || multiSelected ? `Remove ${item.preview || 'item'} from selection` : `Add ${item.preview || 'item'} to selection`}
+        aria-pressed={selected || multiSelected}
+        onClick={(event) => {
+          event.stopPropagation();
+          selectToggle(item.id);
+        }}
+        onDoubleClick={(event) => event.stopPropagation()}
+      >
+        {(selected || multiSelected) && <Check size={13} strokeWidth={3} aria-hidden />}
+      </button>
       <span className="kind-icon">
         <KindIcon item={item} />
       </span>

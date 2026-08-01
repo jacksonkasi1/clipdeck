@@ -39,7 +39,8 @@ export default function App() {
 
   useEffect(() => {
     applyTheme(settings?.theme ?? 'system', appearance);
-  }, [settings?.theme, appearance]);
+    document.documentElement.dataset.backdrop = settings?.backdrop ?? 'acrylic';
+  }, [settings?.theme, settings?.backdrop, appearance]);
 
   useEffect(() => {
     if (!settings) return;
@@ -139,7 +140,9 @@ export default function App() {
         select(null);
       } else if (modifier && key === ',') {
         event.preventDefault();
-        void api.openSettingsWindow();
+        void api.openSettingsWindow().catch((error: unknown) => {
+          console.error('Settings could not be opened', error);
+        });
       } else if (modifier && event.shiftKey && key === 'p') {
         event.preventDefault();
         setShowPreview(!showPreview);

@@ -221,6 +221,9 @@ pub struct ClipItem {
     pub file_assets: Vec<StoredFile>,
     pub size_bytes: i64,
     pub source: Option<SourceApp>,
+    /// User-defined local labels used for organization and search.
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub favorite: bool,
     pub copy_count: i64,
     pub device: DeviceIdentity,
@@ -261,6 +264,52 @@ pub enum PasteFlavor {
     PlainText,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileFilterMode {
+    #[default]
+    All,
+    Include,
+    Exclude,
+}
+
+fn default_included_extensions() -> Vec<String> {
+    [".txt", ".pdf"].into_iter().map(str::to_string).collect()
+}
+
+fn default_excluded_extensions() -> Vec<String> {
+    [
+        ".exe", ".bat", ".cmd", ".msi", ".scr", ".com", ".dll", ".sys",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFormat {
+    #[default]
+    Original,
+    Png,
+    Jpeg,
+    Webp,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageCompression {
+    None,
+    #[default]
+    Normal,
+    Best,
+    Manual,
+}
+
+fn default_image_quality() -> u8 {
+    80
+}
+
 /// User-facing configuration, persisted in the `settings` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -284,6 +333,22 @@ pub struct Settings {
     /// Maximum bytes stored for one clipboard file or folder group.
     #[serde(default = "default_snapshot_limit_mb")]
     pub max_snapshot_size_mb: u32,
+    /// Optional include/exclude policy for local file clipboard capture.
+    #[serde(default)]
+    pub file_filter_mode: FileFilterMode,
+    /// Lowercase extensions such as `.txt` used by Include mode.
+    #[serde(default = "default_included_extensions")]
+    pub file_include_extensions: Vec<String>,
+    /// Lowercase extensions such as `.exe` used by Exclude mode.
+    #[serde(default = "default_excluded_extensions")]
+    pub file_exclude_extensions: Vec<String>,
+    /// Managed image format. Clipboard restoration remains visually equivalent.
+    #[serde(default)]
+    pub image_format: ImageFormat,
+    #[serde(default)]
+    pub image_compression: ImageCompression,
+    #[serde(default = "default_image_quality")]
+    pub image_quality: u8,
     /// Optional managed-content root. `None` uses Windows app data.
     #[serde(default)]
     pub storage_path: Option<String>,
@@ -330,6 +395,12 @@ impl Default for Settings {
             capture_files: true,
             store_file_snapshots: true,
             max_snapshot_size_mb: 512,
+            file_filter_mode: FileFilterMode::All,
+            file_include_extensions: default_included_extensions(),
+            file_exclude_extensions: default_excluded_extensions(),
+            image_format: ImageFormat::Original,
+            image_compression: ImageCompression::Normal,
+            image_quality: default_image_quality(),
             storage_path: None,
             ignored_apps: Vec::new(),
             backdrop: Backdrop::Acrylic,

@@ -1,63 +1,118 @@
 # Clipdeck — v0.2.0 TODO
 
-Snapshot of the work that needs to land between the current `v0.1.1` release
-and the next cross-device release. This file is design-only: nothing has been
-implemented yet. Each section ends with concrete deliverable(s) so the next
-coder can pick it up without re-deriving the intent.
+Snapshot of the work between the current `v0.1.1` release and the next
+cross-device release. PR A and the non-sync portion of PR B are **done**. Cross-device work in
+PRs C–F remains deferred; PR G is release follow-up.
+
+> **Status legend**
+> - ✅ done — code shipped, tests green, build verified locally.
+> - 🟡 in progress / partial.
+> - ⬜ pending — design is final, implementation not started.
 
 ---
 
-## 1. Quick-win bug fixes
+## PR A — Quick-win bug fixes + multi-select ✅ DONE
 
-Two small, well-scoped fixes that are not part of the LAN sync work but
-should ride along with v0.2.0.
+Shipped in commits `e773bfc`, `8ad1639`, `5b5e6fe` on
+`feat/clipdeck-lan-sync`.
 
-### 1a. "Open in browser" button does nothing on link previews
+### 1a. "Open in browser" button ✅
 
-- **Repro:** Select a link item → click the "Open in browser" button in
-  `PreviewPane.tsx:243`. Nothing happens.
-- **Where:** `src/components/PreviewPane.tsx:243` calls
-  `api.openUrl(url)` which is `opener.openUrl` from
-  `@tauri-apps/plugin-opener` (`src/lib/tauri.ts:60`).
-- **Likely cause:** the URL captured from the clipboard is missing the
-  scheme (e.g. `example.com` instead of `https://example.com`) and the
-  opener plugin returns an error silently. The clipboard classifier
-  treats `text` URLs as text-only entries, and `is_link()` only succeeds
-  when the scheme parses.
-- **Fix:** before calling `api.openUrl`, normalise the URL:
-  - `tryParseScheme(url)` first
-  - if it has no scheme and looks like a domain (`looksLikeDomain(url)`),
-    prepend `https://`
-  - wrap the call in a try/catch and surface a toast on failure so the
-    user gets feedback instead of silence.
-- **Files to touch:** `src/components/PreviewPane.tsx`,
-  `src/lib/url.ts` (new tiny helper), `src/lib/tauri.ts` if the error
-  contract needs to be propagated.
-- **Acceptance:** clicking the button opens the default browser within
-  1 s for `https://example.com`, `example.com`, and rejects
-  `not a url` with a friendly toast.
+- New `src/lib/url.ts` with `hasScheme`, `looksLikeDomain`,
+  `tryParseScheme`, `normaliseUrl`.
+- Whitelist-only scheme regex (`https?` / `mailto`); `javascript:`,
+  `file:`, `data:`, `ftp://` are rejected before `tryParseScheme`
+  returns success.
+- Localhost is accepted without a scheme (`localhost:3000` →
+  `http://localhost:3000`).
+- `PreviewPane.tsx` calls `normaliseUrl` then `api.openUrl`; failures
+  surface through the new `toast()` surface instead of failing silently.
+- Unit tests: `src/lib/url.test.ts` — 13 cases covering the rejection
+  cases, IPv4, scheme-already-present, mailto + `@`.
 
-### 1b. `Ctrl+S` does not save while editing a clipboard item
+### 1b. `Ctrl+S` saves an in-progress edit ✅
 
-- **Repro:** Select a text item → press `Enter` or click Pencil → edit
-  content → press `Ctrl+S`. The form is not submitted.
-- **Where:** `src/components/PreviewPane.tsx:318` — the `<textarea>`
-  `onKeyDown` only handles `Escape` and `Ctrl+Enter`. There is no
-  `Ctrl+S` handler anywhere in the renderer.
-- **Important:** the global shortcut plugin (`Ctrl+S`) is **not**
-  registered — `install_hotkey` only registers the open-shortcut
-  (`src-tauri/src/commands.rs:422`). Browser default `Ctrl+S` triggers
-  "save page as…" on the webview, which is also wrong.
-- **Fix:** add `event.key === 's' && (event.ctrlKey || event.metaKey)`
-  to the existing `onKeyDown`, prevent default, and call
-  `event.currentTarget.form?.requestSubmit()`.
-- **Files to touch:** `src/components/PreviewPane.tsx` only.
-- **Acceptance:** `Ctrl+S` saves the edit and exits edit mode; `Enter`
-  inserts a newline; `Ctrl+Enter` still saves.
+- `PreviewPane.tsx` `onKeyDown` now handles `Ctrl+S` / `Cmd+S` (calls
+  `event.currentTarget.form?.requestSubmit()` and `preventDefault()`).
+- `Enter` still inserts a newline; `Ctrl+Enter` still saves.
+- The browser default (`save page as…`) is suppressed.
+
+### 1c. Multi-select ✅
+
+- zustand store gains `selectedIds: Set<number>`,
+  `selectionAnchor: number | null`, `pendingSelection: number | null`.
+- `ItemList` / `ItemRow` route clicks by modifier:
+  - **plain** — single select, anchor moves.
+  - **Ctrl/Cmd+click** — toggle membership, anchor preserved.
+  - **Shift+click** — range from anchor to clicked row (clamped to
+    filtered index).
+- Keyboard: `Shift+↑/↓` extends range, `Ctrl+↑/↓` moves focus,
+  `Ctrl+A` selects all in the filtered list, `Escape` clears.
+- Toolbar **Delete** button routes to `deleteSelected()` when more
+  than one row is highlighted.
+- `deleteSelected` collects failed ids and toasts
+  `<n> deleted, <m> failed`.
+
+### 1d. Post-delete selection cursor ✅
+
+- `deleteItem` captures the *successor* row before the async refresh
+  and re-asserts `pendingSelection` both before and after the await.
+  This survives a concurrent `refresh()` from another tab.
+- The cursor lands on the next item if any; otherwise on the previous;
+  otherwise cleared.
+
+### 1e. Code review cleanups ✅
+
+Sub-agent review of the PR A diff landed ten minor fixes:
+
+- `toast.ts` rewritten with `createElement` (was JSX in a `.ts` file).
+- `ItemRow` className uses `.filter(Boolean).join(' ')` so empty
+  `kind-…` slots don't leave double spaces.
+- `selectRange` defends against a stale anchor pointing past the
+  filtered list.
+- `refresh()` re-anchors when the filter changes so multi-select
+  survives a search edit.
+- `deleteSelected` uses the same `preserveSuccessor()` closure
+  pattern as `deleteItem`.
+- Removed dead `clearSelection` action.
+- `deleteSelected` failures show a count toast instead of swallowing.
+- `PreviewPane` toolbar adds `selectedIds` + `deleteSelected` to its
+  store hook list.
+- `EditItem` save error path also toasts.
+- `normaliseUrl` no longer double-prefixes `https://` when the input
+  already has a scheme.
+
+### 1f. Filter-change selection persistence ✅
+
+- `refresh()` records the new filtered index for the current anchor
+  so the row stays selected when the user narrows the search.
+
+### 1g. WebView2Loader.dll bundling ✅
+
+Two bugs fixed before the local installer would actually launch:
+
+1. `webview2-com-sys` drops `WebView2Loader.dll` under
+   `target/<profile>/build/webview2-com-sys-*/out/x64/`, but the
+   Tauri 2 `-windows-gnu` bundler looks at
+   `target/<profile>/WebView2Loader.dll`. `src-tauri/build.rs` now
+   copies the file into the expected location during the build.
+2. `tauri.conf.json` `bundle.resources` previously declared
+   `"target/release/WebView2Loader.dll": …` which preserved the
+   long source path inside the installer. Switched to
+   `{"target/release/WebView2Loader.dll": "WebView2Loader.dll"}` so
+   the DLL is placed at the package root.
+
+### 1h. Local Windows installer build ✅
+
+- MinGW GNU toolchain (`x86_64-pc-windows-gnu`) with
+  `RUSTUP_TOOLCHAIN` and `windres` on PATH.
+- `cargo tauri build` produces
+  `target/release/bundle/nsis/Clipdeck_0.1.1_x64-setup.exe` and the
+  bundle now ships a working `WebView2Loader.dll`.
 
 ---
 
-## 2. Settings UI restructure — tabs
+## PR B — Settings UI tabs ✅ DONE (sync sub-tabs deferred)
 
 The single-page Settings scroll is going to grow further when file sync
 controls land. The shape is:
@@ -98,7 +153,7 @@ Settings
    `src/settings/{Appearance,Capture,History,CrossDevice,Shortcuts,Advanced}.tsx`,
    re-exported from `Settings.tsx`.
 4. The Cross-device tab owns the current Cross-device sync section
-   plus the new content/filter/peer sub-sections (see §3 and §4).
+   plus the new content/filter/peer sub-sections (see PR C and PR D).
 
 ### Acceptance
 
@@ -111,7 +166,7 @@ Settings
 
 ---
 
-## 3. Cross-device sync — file sync design
+## PR C — Cross-device sync scope toggles ⬜ PENDING
 
 The current `feat/clipdeck-lan-sync` WIP only ships text-like payloads
 (text/links/email/colors). v0.2.0 must add a **controllable** file sync
@@ -150,7 +205,7 @@ pub sync_max_total_size_mb: u32,       // default 100, cumulative queue cap
 All of these are intentionally **defaults**, not hard-banned — the user
 can flip to `Allowlist` and pick a small set, or clear the blocklist.
 
-### 3b. Sizing policy
+### 3b. Sizing policy (PR C, repeated as PR D bytes)
 
 - **Per-file cap** (`sync_max_file_size_mb`): silently skip and log
   on the sender if a single file exceeds the cap. Never block the
@@ -199,7 +254,7 @@ direction on a dedicated QUIC/TCP bidirectional stream per snapshot.
 The receiver writes to `storage::file_root` / `image_root` (re-use
 the existing asset roots), then calls `db::upsert(FileItem)`.
 
-### 3d. Classification on the listener
+### 3d. Classification on the listener (PR C; PR D for file bytes)
 
 `commands::CaptureSink::handle()` currently routes by `ItemKind`
 (`text/link/email/color/image/files`). Add:
@@ -213,7 +268,7 @@ the existing asset roots), then calls `db::upsert(FileItem)`.
 
 The receiver must apply the same filters as a defence-in-depth measure.
 
-### 3e. Receiver-side persistence
+### 3e. Receiver-side persistence (PR D bytes)
 
 - New `db::Db::import_synced_file_item(device, FileSnapshot, bytes)`
   writes the bytes to `storage::file_root/<device_id>/<hash>.bin` and
@@ -236,12 +291,44 @@ The receiver must apply the same filters as a defence-in-depth measure.
 
 ---
 
-## 4. Cross-device sync — image bytes
+## PR D — Cross-device sync file bytes ⬜ PENDING
+
+Once PR C lands the scope toggles, this PR adds the on-the-wire bytes
+path for `ItemKind::Files`.
+
+### 4a. Sender
+
+- On `NewItem{ kind: Files }`, the sender reads the file bytes from
+  `storage::file_root` and streams them after the JSON envelope in
+  64 KiB chunks.
+- Sender-side cap: `sync_max_file_size_mb`. Over the cap → skip
+  silently with a log line. Never break the local capture.
+- Per-batch cap: `sync_max_total_size_mb` cumulative queue size;
+  drop oldest envelopes first (newest wins).
+
+### 4b. Receiver
+
+- `db::Db::import_synced_file_item(device, FileSnapshot, bytes)`
+  writes the bytes to `storage::file_root/<device_id>/<hash>.bin`
+  then inserts the row via `db.upsert(&NewItem)`.
+- Receiver re-applies the same size cap as a defence-in-depth measure.
+
+### 4c. Acceptance
+
+- Two paired devices, copy a 1 MB `.txt` on A → appears on B within
+  2 s with the file content available via the existing asset
+  protocol scope.
+- Copy a 30 MB `.txt` on A → silently skipped on A; no row on B.
+- The local item on A is unchanged (capture path is not delayed).
+
+---
+
+## PR E — Cross-device sync image bytes ⬜ PENDING
 
 Already partially scoped in `drifting-cooking-puzzle.md` PR 5. Pull
 the relevant subset into a working list.
 
-### 4a. Sender
+### 5a. Sender
 
 - On `NewItem{ kind: Image }`, the sender reads the PNG bytes from
   `storage::image_root` and the thumbnail from `thumb_root`, base64
@@ -249,13 +336,13 @@ the relevant subset into a working list.
 - Cap at 512 KiB total payload (PNG + thumbnail). Above the cap, skip
   silently with a log line. Never break the local capture.
 
-### 4b. Receiver
+### 5b. Receiver
 
 - `db::Db::import_synced_image_item(device, ImageWire)` writes the PNG
   to `storage::image_root/<device_id>/<hash>.png` and the thumbnail
   to `thumb_root/<device_id>/<hash>.png`, then calls `db.upsert()`.
 
-### 4c. Acceptance
+### 5c. Acceptance
 
 - Two paired devices, copy a 200 kB PNG on A → appears on B within 2 s
   with thumbnail rendered.
@@ -264,7 +351,7 @@ the relevant subset into a working list.
 
 ---
 
-## 5. Cross-device sync — edit / pin / delete propagation
+## PR F — Edit / pin / delete propagation ⬜ PENDING
 
 The WIP only propagates new clip captures. v0.2.0 must also propagate:
 
@@ -275,15 +362,15 @@ The WIP only propagates new clip captures. v0.2.0 must also propagate:
 - **Delete** — when the user deletes an item, peers also delete the
   matching row.
 
-### 5a. Wire
+### 6a. Wire
 
 - Add `ClipEdit { id_hash, content }`, `FavoriteToggle { id_hash,
-  favorite }`, `Tombstone { id_hash }` to `SyncBody` (see §3c).
+  favorite }`, `Tombstone { id_hash }` to `SyncBody` (see PR C §3c).
 - `id_hash` is the existing `content_hash` for text-like items, plus
   a new `id_hash` column on `items` (idempotent migration) so a peer
   can address an item by its global ID regardless of local row id.
 
-### 5b. LWW conflict resolution
+### 6b. LWW conflict resolution
 
 - Each `NewItem` and each edit carries `origin_device_id`,
   `origin_lamport`, `origin_wall_ms` (three new columns, idempotent
@@ -293,12 +380,12 @@ The WIP only propagates new clip captures. v0.2.0 must also propagate:
 - `merge.rs::lww_resolve` compares `(lamport, wall_ms)` tuples;
   tiebreaks by `origin_device_id` byte order (deterministic).
 
-### 5c. Self-origin drop
+### 6c. Self-origin drop
 
 - A peer must drop packets whose `origin_device_id == self.device_id`.
   Prevents loops when the same device is reachable via multiple paths.
 
-### 5d. Acceptance
+### 6d. Acceptance
 
 - Edit on A → B reflects the new content within 1 s.
 - Pin on A → B's star mirror within 1 s.
@@ -308,7 +395,7 @@ The WIP only propagates new clip captures. v0.2.0 must also propagate:
 
 ---
 
-## 6. Cross-device sync — mobile + release
+## PR G — Mobile + release polish ⬜ PENDING
 
 Out of scope for the immediate TODO but flagged so the file/setting
 design does not paint us into a corner:
@@ -331,21 +418,22 @@ design does not paint us into a corner:
 
 Recommended PR order so each lands green and reviewable:
 
-1. **PR A — bug fixes (1a, 1b).** Tiny, isolated, low-risk.
+1. **PR A — bug fixes + multi-select + bundling** ✅ DONE
+   (commits `e773bfc`, `8ad1639`, `5b5e6fe`).
 2. **PR B — Settings UI tabs.** Pure frontend restructure, no logic
    changes. The current Settings.tsx is split into the new layout.
 3. **PR C — Cross-device tab content (text/links/colors already work,
    expose image toggle).** Adds the `sync_text` / `sync_images` /
    `sync_files` booleans to `Settings` and the new settings UI
    sections; the WIP `sync.rs` already handles the text path.
-4. **PR D — File sync** (§3). The biggest PR; depends on the
-   storage and DB helpers being able to write bytes from a foreign
-   device.
-5. **PR E — Image bytes** (§4). Quick follow-on once file sync's
+4. **PR D — File sync bytes on the wire.** The biggest PR; depends
+   on the storage and DB helpers being able to write bytes from a
+   foreign device.
+5. **PR E — Image bytes.** Quick follow-on once file sync's
    bytes-on-the-wire infra exists.
-6. **PR F — Edit/pin/delete propagation** (§5). Requires the
-   `id_hash` + LWW columns from §5a.
-7. **PR G — Settings tabs polish + manual two-device smoke test** +
+6. **PR F — Edit/pin/delete propagation.** Requires the `id_hash` +
+   LWW columns from PR F §6a.
+7. **PR G — Mobile halves + manual two-device smoke test** +
    v0.2.0 release.
 
 Each PR must keep `cargo check`, `cargo tauri build`,

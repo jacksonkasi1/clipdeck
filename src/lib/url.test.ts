@@ -71,7 +71,7 @@ describe('url helpers', () => {
 
     it('prepends https for bare domains', () => {
       expect(normaliseUrl('example.com')).toBe('https://example.com');
-      expect(normaliseUrl('localhost:3000')).toBe('https://localhost:3000');
+      expect(normaliseUrl('localhost:3000')).toBe('http://localhost:3000');
     });
 
     it('strips a stray mailto prefix before re-prepending', () => {

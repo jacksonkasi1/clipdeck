@@ -8,6 +8,10 @@ export type PasteFlavor = 'original' | 'plainText';
 
 export type Backdrop = 'acrylic' | 'mica' | 'solid';
 
+export type FileFilterMode = 'all' | 'include' | 'exclude';
+export type ImageFormat = 'original' | 'png' | 'jpeg' | 'webp';
+export type ImageCompression = 'none' | 'normal' | 'best' | 'manual';
+
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface ImageMeta {
@@ -69,6 +73,7 @@ export interface ClipItem {
   files: string[];
   fileAssets: StoredFile[];
   sizeBytes: number;
+  tags: string[];
   source: SourceApp | null;
   favorite: boolean;
   copyCount: number;
@@ -116,6 +121,12 @@ export interface Settings {
   captureFiles: boolean;
   storeFileSnapshots: boolean;
   maxSnapshotSizeMb: number;
+  fileFilterMode: FileFilterMode;
+  fileIncludeExtensions: string[];
+  fileExcludeExtensions: string[];
+  imageFormat: ImageFormat;
+  imageCompression: ImageCompression;
+  imageQuality: number;
   storagePath: string | null;
   ignoredApps: string[];
   backdrop: Backdrop;

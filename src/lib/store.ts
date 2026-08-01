@@ -46,6 +46,7 @@ interface Actions {
   selectRange: (id: number) => void;
   selectAll: () => void;
   toggleFavorite: (id: number) => Promise<void>;
+  setItemTags: (id: number, tags: string[]) => Promise<void>;
   editItem: (id: number, content: string) => Promise<void>;
   deleteItem: (id: number) => Promise<void>;
   deleteSelected: () => Promise<void>;
@@ -263,6 +264,11 @@ export const useStore = create<State & Actions>((set, get) => ({
     const item = get().items.find((i) => i.id === id);
     if (!item) return;
     await api.setFavorite(id, !item.favorite);
+    await get().refresh();
+  },
+
+  setItemTags: async (id, tags) => {
+    await api.setItemTags(id, tags);
     await get().refresh();
   },
 

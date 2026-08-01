@@ -23,14 +23,20 @@ fn copy_webview2_loader() {
     }
 
     let build_dir = target_dir.join("build");
-    let Ok(entries) = std::fs::read_dir(&build_dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&build_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if !name.starts_with("webview2-com-sys-") {
             continue;
         }
-        let candidate = entry.path().join("out").join("x64").join("WebView2Loader.dll");
+        let candidate = entry
+            .path()
+            .join("out")
+            .join("x64")
+            .join("WebView2Loader.dll");
         if candidate.exists() {
             if let Err(error) = std::fs::copy(&candidate, &dst) {
                 eprintln!(

@@ -60,7 +60,7 @@ export function ItemList() {
       role="listbox"
       tabIndex={0}
       aria-label="Clipboard entries"
-      aria-multiselectable={selectedIds.length > 1}
+      aria-multiselectable="true"
       aria-busy={loading || loadingMore}
       aria-activedescendant={selectedId !== null ? `clip-item-${selectedId}` : undefined}
     >

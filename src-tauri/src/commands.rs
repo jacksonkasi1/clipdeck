@@ -10,13 +10,14 @@ use std::sync::{mpsc, Arc};
 use tauri::{App, AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::clipboard::listener::{self, CaptureSink, ClipEvent};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    ClipItem, Counts, ImageMeta, ItemKind, ListQuery, PasteFlavor, Settings, StoredFile,
-    StoredFileStatus, SyncState, SystemAppearance,
+    ClipItem, Counts, ImageCompression, ImageFormat, ImageMeta, ItemKind, ListQuery, PasteFlavor,
+    Settings, StoredFile, StoredFileStatus, SyncState, SystemAppearance,
 };
 use crate::win::paste;
 use crate::AppState;
@@ -134,6 +135,18 @@ pub async fn set_favorite(state: tauri::State<'_, AppState>, id: i64, value: boo
 }
 
 #[tauri::command]
+pub async fn set_item_tags(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    tags: Vec<String>,
+) -> Result<ClipItem> {
+    let item = state.db.set_tags(id, &tags)?;
+    let _ = app.emit("clip-updated", &item);
+    Ok(item)
+}
+
+#[tauri::command]
 pub async fn edit_item(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
@@ -201,6 +214,9 @@ pub async fn save_settings(
     // path mutation through the general settings form.
     let previous = state.settings.read().clone();
     settings.storage_path = previous.storage_path.clone();
+    settings.file_include_extensions = normalise_extensions(&settings.file_include_extensions);
+    settings.file_exclude_extensions = normalise_extensions(&settings.file_exclude_extensions);
+    settings.image_quality = settings.image_quality.clamp(1, 100);
     let hotkey_changed = settings.hotkey != previous.hotkey;
     if hotkey_changed {
         switch_hotkey(&app, &settings.hotkey)?;
@@ -285,6 +301,25 @@ pub async fn appearance() -> Result<SystemAppearance> {
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<()> {
     show_settings_window(&app).map_err(Error::Other)
+}
+
+#[tauri::command]
+pub async fn open_external_url(app: AppHandle, url: String) -> Result<()> {
+    let parsed = url::Url::parse(&url).map_err(|_| Error::Other("invalid URL".into()))?;
+    if !matches!(parsed.scheme(), "http" | "https" | "mailto") {
+        return Err(Error::Other("unsupported URL scheme".into()));
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| Error::Other(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn open_storage_folder(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<()> {
+    let path = state.storage_root.read().to_string_lossy().into_owned();
+    app.opener()
+        .open_path(path, None::<&str>)
+        .map_err(|error| Error::Other(error.to_string()))
 }
 
 #[tauri::command]
@@ -536,12 +571,39 @@ struct SnapshotJob {
 }
 
 impl CaptureSink for TauriSink {
-    fn handle(&self, event: ClipEvent) {
+    fn handle(&self, mut event: ClipEvent) {
         let settings = self.settings.read().clone();
         if (event.kind == ItemKind::Image && !settings.capture_images)
             || (event.kind == ItemKind::Files && !settings.capture_files)
         {
             return;
+        }
+        if event.kind == ItemKind::Files {
+            event.files = filter_local_files(
+                &event.files,
+                settings.file_filter_mode,
+                match settings.file_filter_mode {
+                    crate::models::FileFilterMode::Include => &settings.file_include_extensions,
+                    crate::models::FileFilterMode::Exclude => &settings.file_exclude_extensions,
+                    crate::models::FileFilterMode::All => &[],
+                },
+            );
+            if event.files.is_empty() {
+                log::info!("file clipboard entry skipped by extension filter");
+                return;
+            }
+            let paths: Vec<PathBuf> = event.files.iter().map(PathBuf::from).collect();
+            event.content = event.files.join("\n");
+            event.content_hash = crate::clipboard::hash_files(&paths);
+            let first = paths
+                .first()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "Files".into());
+            event.preview = match paths.len().saturating_sub(1) {
+                0 => first,
+                more => format!("{first} + {more} more"),
+            };
         }
         if event.source.as_ref().is_some_and(|source| {
             settings
@@ -609,6 +671,61 @@ impl CaptureSink for TauriSink {
     }
 }
 
+fn filter_local_files(
+    files: &[String],
+    mode: crate::models::FileFilterMode,
+    configured: &[String],
+) -> Vec<String> {
+    use crate::models::FileFilterMode;
+
+    if mode == FileFilterMode::All {
+        return files.to_vec();
+    }
+    let extensions: std::collections::HashSet<String> = configured
+        .iter()
+        .filter_map(|value| normalise_extension(value))
+        .collect();
+    files
+        .iter()
+        .filter(|value| {
+            let path = PathBuf::from(value);
+            if path.is_dir() {
+                return true;
+            }
+            let extension = path
+                .extension()
+                .map(|value| format!(".{}", value.to_string_lossy().to_lowercase()));
+            let listed = extension.is_some_and(|value| extensions.contains(&value));
+            match mode {
+                FileFilterMode::All => true,
+                FileFilterMode::Include => listed,
+                FileFilterMode::Exclude => !listed,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+fn normalise_extensions(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .filter_map(|value| normalise_extension(value))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn normalise_extension(value: &str) -> Option<String> {
+    let value = value.trim().to_lowercase();
+    if value.is_empty() {
+        None
+    } else if value.starts_with('.') {
+        Some(value)
+    } else {
+        Some(format!(".{value}"))
+    }
+}
+
 fn source_matches_ignored(source: &crate::models::SourceApp, ignored: &str) -> bool {
     let ignored = ignored.trim();
     if ignored.is_empty() {
@@ -664,22 +781,28 @@ fn persist(
             .as_deref()
             .ok_or_else(|| Error::Other("captured image bytes were missing".into()))?;
         let hash = &event.content_hash;
-        let img_path = crate::storage::image_root(storage_root).join(format!("{hash}.png"));
-        let thumb_path = crate::storage::thumb_root(storage_root).join(format!("{hash}.png"));
-        std::fs::write(&img_path, bytes)?;
-        write_thumbnail(bytes, &thumb_path)?;
-        let (w, h) = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-            .map(|img| (img.width(), img.height()))
-            .unwrap_or((0, 0));
-        (
-            Some(ImageMeta {
-                path: img_path.to_string_lossy().to_string(),
-                thumb_path: thumb_path.to_string_lossy().to_string(),
-                width: w,
-                height: h,
-            }),
-            bytes.len() as i64,
-        )
+        if let Some(existing) = db.get_by_hash(hash)?.filter(|item| item.image.is_some()) {
+            (existing.image, existing.size_bytes)
+        } else {
+            let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
+                .map_err(Error::Image)?;
+            let (extension, encoded) = encode_stored_image(&image, bytes, settings)?;
+            let img_path =
+                crate::storage::image_root(storage_root).join(format!("{hash}.{extension}"));
+            let thumb_path = crate::storage::thumb_root(storage_root).join(format!("{hash}.png"));
+            std::fs::write(&img_path, &encoded)?;
+            write_thumbnail(bytes, &thumb_path)?;
+            let (w, h) = (image.width(), image.height());
+            (
+                Some(ImageMeta {
+                    path: img_path.to_string_lossy().to_string(),
+                    thumb_path: thumb_path.to_string_lossy().to_string(),
+                    width: w,
+                    height: h,
+                }),
+                encoded.len().min(i64::MAX as usize) as i64,
+            )
+        }
     } else {
         (None, event.size_bytes)
     };
@@ -725,6 +848,68 @@ fn persist(
     })
 }
 
+fn encode_stored_image(
+    image: &image::DynamicImage,
+    original_png: &[u8],
+    settings: &Settings,
+) -> Result<(&'static str, Vec<u8>)> {
+    use image::ImageEncoder;
+    use std::io::Cursor;
+
+    let quality = match settings.image_compression {
+        ImageCompression::None => 100,
+        ImageCompression::Normal => 82,
+        ImageCompression::Best => 68,
+        ImageCompression::Manual => settings.image_quality.clamp(1, 100),
+    };
+    match settings.image_format {
+        ImageFormat::Original => Ok(("png", original_png.to_vec())),
+        ImageFormat::Png => {
+            let rgba = image.to_rgba8();
+            let mut output = Vec::new();
+            let compression = match settings.image_compression {
+                ImageCompression::None => image::codecs::png::CompressionType::Fast,
+                ImageCompression::Best => image::codecs::png::CompressionType::Best,
+                _ => image::codecs::png::CompressionType::Default,
+            };
+            image::codecs::png::PngEncoder::new_with_quality(
+                &mut output,
+                compression,
+                image::codecs::png::FilterType::Adaptive,
+            )
+            .write_image(
+                &rgba,
+                rgba.width(),
+                rgba.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(Error::Image)?;
+            Ok(("png", output))
+        }
+        ImageFormat::Jpeg => {
+            let rgb = image.to_rgb8();
+            let mut output = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut output, quality)
+                .encode_image(&image::DynamicImage::ImageRgb8(rgb))
+                .map_err(Error::Image)?;
+            Ok(("jpg", output))
+        }
+        ImageFormat::Webp => {
+            let rgba = image.to_rgba8();
+            let mut output = Cursor::new(Vec::new());
+            image::codecs::webp::WebPEncoder::new_lossless(&mut output)
+                .encode(
+                    &rgba,
+                    rgba.width(),
+                    rgba.height(),
+                    image::ExtendedColorType::Rgba8,
+                )
+                .map_err(Error::Image)?;
+            Ok(("webp", output.into_inner()))
+        }
+    }
+}
+
 fn write_thumbnail(bytes: &[u8], dest: &std::path::Path) -> Result<()> {
     let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
         .map_err(Error::Image)?;
@@ -732,6 +917,44 @@ fn write_thumbnail(bytes: &[u8], dest: &std::path::Path) -> Result<()> {
     thumb
         .save_with_format(dest, image::ImageFormat::Png)
         .map_err(Error::Image)
+}
+
+#[cfg(test)]
+mod file_filter_tests {
+    use super::*;
+    use crate::models::FileFilterMode;
+
+    fn names(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    #[test]
+    fn include_filter_is_case_insensitive_and_normalises_dots() {
+        let files = names(&[
+            r"C:\work\notes.TXT",
+            r"C:\work\manual.pdf",
+            r"C:\work\README",
+        ]);
+        assert_eq!(
+            filter_local_files(&files, FileFilterMode::Include, &names(&["txt", ".MD"])),
+            names(&[r"C:\work\notes.TXT"]),
+        );
+    }
+
+    #[test]
+    fn exclude_filter_keeps_unlisted_and_extensionless_files() {
+        let files = names(&[r"C:\work\safe.txt", r"C:\work\tool.EXE", r"C:\work\README"]);
+        assert_eq!(
+            filter_local_files(&files, FileFilterMode::Exclude, &names(&[".exe"])),
+            names(&[r"C:\work\safe.txt", r"C:\work\README"]),
+        );
+    }
+
+    #[test]
+    fn all_filter_does_not_change_the_clipboard_paths() {
+        let files = names(&[r"C:\work\one.exe", r"C:\work\two.txt"]);
+        assert_eq!(filter_local_files(&files, FileFilterMode::All, &[]), files);
+    }
 }
 
 /// Pushes the runtime parts of the settings (hotkey, backdrop, theme) to the
@@ -789,8 +1012,11 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
         let settings = state.settings.read().clone();
         let system = crate::win::appearance::read();
         crate::native_appearance::apply_window(&existing, &settings, &system);
-        let _ = existing.show();
-        let _ = existing.set_focus();
+        if existing.is_minimized().unwrap_or(false) {
+            existing.unminimize().map_err(|error| error.to_string())?;
+        }
+        existing.show().map_err(|error| error.to_string())?;
+        existing.set_focus().map_err(|error| error.to_string())?;
         return Ok(());
     }
     let window =
@@ -800,6 +1026,7 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
             .min_inner_size(680.0, 560.0)
             .resizable(true)
             .decorations(true)
+            .transparent(true)
             .skip_taskbar(true)
             .center()
             .visible(false)

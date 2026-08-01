@@ -259,7 +259,9 @@ function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
             toast('That link is not a URL Clipdeck can open.', 'error');
             return;
           }
-          void api.openUrl(normaliseUrl(url));
+          void api.openExternalUrl(normaliseUrl(url)).catch((error: unknown) => {
+            toast(`The default browser could not be opened: ${String(error)}`, 'error');
+          });
         }}
       >
         <ExternalLink size={16} aria-hidden /> Open in browser

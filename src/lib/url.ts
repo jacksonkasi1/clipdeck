@@ -68,6 +68,7 @@ export function tryParseScheme(value: string): string | null {
 export function normaliseUrl(value: string): string {
   const trimmed = value.trim();
   if (hasScheme(trimmed)) return trimmed;
+  if (LOCALHOST.test(trimmed)) return `http://${trimmed}`;
   if (looksLikeDomain(trimmed)) return `https://${trimmed}`;
   if (trimmed.includes('@') && !trimmed.includes(' ')) return `mailto:${trimmed}`;
   return trimmed;
