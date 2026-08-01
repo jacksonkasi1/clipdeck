@@ -35,6 +35,9 @@ pub const CF_HTML: &str = "HTML Format";
 pub const CF_RTF: &str = "Rich Text Format";
 pub const EXCLUDE_FROM_MONITOR: &str = "ExcludeClipboardContentFromMonitorProcessing";
 pub const CAN_INCLUDE_IN_HISTORY: &str = "CanIncludeInClipboardHistory";
+/// Private marker attached to writes restored by Clipdeck. Its presence suppresses
+/// exactly that clipboard transaction instead of hiding unrelated copies in a timeout.
+pub const CLIPDECK_INTERNAL_WRITE: &str = "app.clipdeck.desktop.InternalWrite.v1";
 
 /// Pre-resolved handles to the registered clipboard formats so we only do the
 /// `RegisterClipboardFormatW` lookup once per process.
@@ -43,6 +46,7 @@ pub struct Formats {
     pub rtf: u32,
     pub exclude: u32,
     pub can_include: u32,
+    pub internal_write: u32,
 }
 
 /// Consistent view of all supported formats captured during one clipboard
@@ -71,6 +75,7 @@ impl Formats {
             rtf: register(CF_RTF),
             exclude: register(EXCLUDE_FROM_MONITOR),
             can_include: register(CAN_INCLUDE_IN_HISTORY),
+            internal_write: register(CLIPDECK_INTERNAL_WRITE),
         }
     }
 }
@@ -86,10 +91,28 @@ pub fn is_sensitive(formats: &Formats) -> bool {
     with_clipboard(|| Some(is_sensitive_open(formats))).unwrap_or(false)
 }
 
+fn should_suppress_snapshot(sensitive: bool, internal_write: bool) -> bool {
+    sensitive || internal_write
+}
+
+#[cfg(test)]
+mod suppression_tests {
+    use super::should_suppress_snapshot;
+
+    #[test]
+    fn self_write_marker_suppresses_only_marked_transactions() {
+        assert!(should_suppress_snapshot(false, true));
+        assert!(should_suppress_snapshot(true, false));
+        assert!(!should_suppress_snapshot(false, false));
+    }
+}
+
 /// Reads every supported clipboard flavor under one short-lived lock.
 pub fn read_snapshot(formats: &Formats) -> Option<ClipboardSnapshot> {
     let raw = with_clipboard(|| {
-        if is_sensitive_open(formats) {
+        let internal_write = formats.internal_write != 0
+            && IsClipboardFormatAvailable(formats.internal_write).as_bool();
+        if should_suppress_snapshot(is_sensitive_open(formats), internal_write) {
             return None;
         }
 

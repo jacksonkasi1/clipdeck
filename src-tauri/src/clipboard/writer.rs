@@ -17,6 +17,10 @@ pub fn put_back_on_clipboard(
         windows::Win32::System::DataExchange::EmptyClipboard()
             .map_err(|error| Error::Clipboard(format!("EmptyClipboard: {error}")))?;
     }
+    // Mark this exact clipboard transaction as internal before publishing any
+    // user format. The listener checks the private format while reading the same
+    // transaction, so no broad time window can suppress another application's copy.
+    write_registered_bytes(super::formats::CLIPDECK_INTERNAL_WRITE, b"1")?;
 
     if flavor == PasteFlavor::PlainText {
         let plain = match item.kind {

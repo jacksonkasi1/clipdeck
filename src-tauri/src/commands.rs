@@ -214,8 +214,11 @@ pub async fn save_settings(
     // path mutation through the general settings form.
     let previous = state.settings.read().clone();
     settings.storage_path = previous.storage_path.clone();
-    settings.file_include_extensions = normalise_extensions(&settings.file_include_extensions);
-    settings.file_exclude_extensions = normalise_extensions(&settings.file_exclude_extensions);
+    settings.file_include_extensions =
+        crate::capture_policy::normalize_extensions(&settings.file_include_extensions);
+    settings.file_exclude_extensions =
+        crate::capture_policy::normalize_extensions(&settings.file_exclude_extensions);
+    settings.ignored_apps = crate::capture_policy::normalize_ignored_apps(&settings.ignored_apps);
     settings.image_quality = settings.image_quality.clamp(1, 100);
     let hotkey_changed = settings.hotkey != previous.hotkey;
     if hotkey_changed {
@@ -291,6 +294,31 @@ pub async fn change_storage_location(
 #[tauri::command]
 pub async fn prune_now(state: tauri::State<'_, AppState>) -> Result<()> {
     enforce_history_policy(&state)
+}
+
+#[tauri::command]
+pub async fn list_installed_apps(
+    refresh: Option<bool>,
+) -> Result<Vec<crate::models::ApplicationInfo>> {
+    Ok(crate::win::apps::installed(refresh.unwrap_or(false)))
+}
+
+#[tauri::command]
+pub async fn list_running_apps() -> Result<Vec<crate::models::ApplicationInfo>> {
+    Ok(crate::win::apps::running())
+}
+
+#[tauri::command]
+pub async fn resolve_application_identity(
+    executable_path: String,
+) -> Result<crate::models::IgnoredApp> {
+    crate::win::apps::resolve(&executable_path)
+        .ok_or_else(|| Error::Other("executable path is empty".into()))
+}
+
+#[tauri::command]
+pub async fn extract_application_icon(executable_path: String) -> Result<Option<String>> {
+    Ok(crate::win::apps::extract_icon(&executable_path))
 }
 
 #[tauri::command]
@@ -578,22 +606,54 @@ impl CaptureSink for TauriSink {
         {
             return;
         }
+        #[cfg(debug_assertions)]
+        log::debug!("capture_filter kind={:?}", event.kind);
         if event.kind == ItemKind::Files {
-            event.files = filter_local_files(
-                &event.files,
+            let original_files = event.files.clone();
+            let configured = match settings.file_filter_mode {
+                crate::models::FileFilterMode::Include => &settings.file_include_extensions,
+                crate::models::FileFilterMode::Exclude => &settings.file_exclude_extensions,
+                crate::models::FileFilterMode::All => &[],
+            };
+            event.files = crate::capture_policy::filter_local_files(
+                &original_files,
                 settings.file_filter_mode,
-                match settings.file_filter_mode {
-                    crate::models::FileFilterMode::Include => &settings.file_include_extensions,
-                    crate::models::FileFilterMode::Exclude => &settings.file_exclude_extensions,
-                    crate::models::FileFilterMode::All => &[],
-                },
+                configured,
             );
+            #[cfg(debug_assertions)]
+            {
+                let rejected: Vec<_> = original_files
+                    .iter()
+                    .filter(|path| !event.files.contains(path))
+                    .collect();
+                let original_names: Vec<_> = original_files
+                    .iter()
+                    .filter_map(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()))
+                    .collect();
+                let accepted_names: Vec<_> = event
+                    .files
+                    .iter()
+                    .filter_map(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()))
+                    .collect();
+                let rejected_names: Vec<_> = rejected
+                    .iter()
+                    .filter_map(|path| PathBuf::from(path).file_name().map(|name| name.to_owned()))
+                    .collect();
+                log::debug!(
+                    "capture_filter kind=files original_names={:?} mode={:?} extensions={:?} accepted_names={:?} rejected_names={:?}",
+                    original_names,
+                    settings.file_filter_mode,
+                    crate::capture_policy::normalize_extensions(configured),
+                    accepted_names,
+                    rejected_names
+                );
+            }
             if event.files.is_empty() {
-                log::info!("file clipboard entry skipped by extension filter");
                 return;
             }
             let paths: Vec<PathBuf> = event.files.iter().map(PathBuf::from).collect();
             event.content = event.files.join("\n");
+            event.size_bytes = event.content.len().min(i64::MAX as usize) as i64;
             event.content_hash = crate::clipboard::hash_files(&paths);
             let first = paths
                 .first()
@@ -606,11 +666,14 @@ impl CaptureSink for TauriSink {
             };
         }
         if event.source.as_ref().is_some_and(|source| {
-            settings
-                .ignored_apps
-                .iter()
-                .any(|ignored| source_matches_ignored(source, ignored))
+            crate::win::source::is_current_process(&source.exe_path)
+                || settings
+                    .ignored_apps
+                    .iter()
+                    .any(|ignored| crate::capture_policy::source_matches_ignored(source, ignored))
         }) {
+            #[cfg(debug_assertions)]
+            log::debug!("capture_filter source_rejected=true");
             return;
         }
 
@@ -669,73 +732,6 @@ impl CaptureSink for TauriSink {
             Err(err) => log::error!("failed to persist clipboard event: {err}"),
         }
     }
-}
-
-fn filter_local_files(
-    files: &[String],
-    mode: crate::models::FileFilterMode,
-    configured: &[String],
-) -> Vec<String> {
-    use crate::models::FileFilterMode;
-
-    if mode == FileFilterMode::All {
-        return files.to_vec();
-    }
-    let extensions: std::collections::HashSet<String> = configured
-        .iter()
-        .filter_map(|value| normalise_extension(value))
-        .collect();
-    files
-        .iter()
-        .filter(|value| {
-            let path = PathBuf::from(value);
-            if path.is_dir() {
-                return true;
-            }
-            let extension = path
-                .extension()
-                .map(|value| format!(".{}", value.to_string_lossy().to_lowercase()));
-            let listed = extension.is_some_and(|value| extensions.contains(&value));
-            match mode {
-                FileFilterMode::All => true,
-                FileFilterMode::Include => listed,
-                FileFilterMode::Exclude => !listed,
-            }
-        })
-        .cloned()
-        .collect()
-}
-
-fn normalise_extensions(values: &[String]) -> Vec<String> {
-    values
-        .iter()
-        .filter_map(|value| normalise_extension(value))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn normalise_extension(value: &str) -> Option<String> {
-    let value = value.trim().to_lowercase();
-    if value.is_empty() {
-        None
-    } else if value.starts_with('.') {
-        Some(value)
-    } else {
-        Some(format!(".{value}"))
-    }
-}
-
-fn source_matches_ignored(source: &crate::models::SourceApp, ignored: &str) -> bool {
-    let ignored = ignored.trim();
-    if ignored.is_empty() {
-        return false;
-    }
-    source.name.eq_ignore_ascii_case(ignored)
-        || source.exe_path.eq_ignore_ascii_case(ignored)
-        || PathBuf::from(&source.exe_path)
-            .file_name()
-            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(ignored))
 }
 
 impl TauriSink {
@@ -917,44 +913,6 @@ fn write_thumbnail(bytes: &[u8], dest: &std::path::Path) -> Result<()> {
     thumb
         .save_with_format(dest, image::ImageFormat::Png)
         .map_err(Error::Image)
-}
-
-#[cfg(test)]
-mod file_filter_tests {
-    use super::*;
-    use crate::models::FileFilterMode;
-
-    fn names(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn include_filter_is_case_insensitive_and_normalises_dots() {
-        let files = names(&[
-            r"C:\work\notes.TXT",
-            r"C:\work\manual.pdf",
-            r"C:\work\README",
-        ]);
-        assert_eq!(
-            filter_local_files(&files, FileFilterMode::Include, &names(&["txt", ".MD"])),
-            names(&[r"C:\work\notes.TXT"]),
-        );
-    }
-
-    #[test]
-    fn exclude_filter_keeps_unlisted_and_extensionless_files() {
-        let files = names(&[r"C:\work\safe.txt", r"C:\work\tool.EXE", r"C:\work\README"]);
-        assert_eq!(
-            filter_local_files(&files, FileFilterMode::Exclude, &names(&[".exe"])),
-            names(&[r"C:\work\safe.txt", r"C:\work\README"]),
-        );
-    }
-
-    #[test]
-    fn all_filter_does_not_change_the_clipboard_paths() {
-        let files = names(&[r"C:\work\one.exe", r"C:\work\two.txt"]);
-        assert_eq!(filter_local_files(&files, FileFilterMode::All, &[]), files);
-    }
 }
 
 /// Pushes the runtime parts of the settings (hotkey, backdrop, theme) to the

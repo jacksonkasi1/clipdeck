@@ -84,13 +84,7 @@ jobs:
           --target ${{ env.WINDOWS_TARGET }}
           --bundles nsis
 
-      - name: Smoke-test packaged executable
-        shell: pwsh
-        run: >-
-          ./scripts/smoke-test-windows.ps1
-          -Executable "src-tauri/target/${{ env.WINDOWS_TARGET }}/release/clipdeck.exe"
-
-      - name: Collect and verify artifacts
+      - name: Build, extract, and smoke-test exact release assets
         id: collect
         shell: pwsh
         run: >-
@@ -98,10 +92,12 @@ jobs:
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -OutputDirectory "artifacts/windows-x64"
 
-      - name: Upload tested Windows bundle
+      - name: Upload only the tested installer and portable ZIP
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
-          path: artifacts/windows-x64/
+          path: |
+            artifacts/windows-x64/${{ steps.collect.outputs.installer }}
+            artifacts/windows-x64/${{ steps.collect.outputs.portable }}
           if-no-files-found: error
           retention-days: 14

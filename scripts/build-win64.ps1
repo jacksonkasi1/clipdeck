@@ -33,9 +33,12 @@ try {
     Pop-Location
 }
 
-$releaseRoot = Join-Path $BuildRoot "$target\release"
-$tauriConfig = Get-Content -Raw (Join-Path $ProjectRoot 'src-tauri\tauri.conf.json') | ConvertFrom-Json
+$metadata = cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $projectRoot 'src-tauri\Cargo.toml') | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'Could not discover Cargo target directory.' }
+$releaseRoot = Join-Path ([string]$metadata.target_directory) "$target\release"
+$tauriConfig = Get-Content -Raw (Join-Path $projectRoot 'src-tauri\tauri.conf.json') | ConvertFrom-Json
 $installerName = "Clipdeck_$($tauriConfig.version)_x64-setup.exe"
 $installerPath = Join-Path $releaseRoot "bundle\nsis\$installerName"
 Write-Host "Application executable: $(Join-Path $releaseRoot 'clipdeck.exe')"
 Write-Host "Installer: $installerPath"
+Write-Host "Run scripts/collect-windows-artifacts.ps1 -TargetTriple $target to create and verify the portable ZIP."

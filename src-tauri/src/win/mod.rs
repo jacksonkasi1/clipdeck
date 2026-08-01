@@ -7,14 +7,19 @@
 //! * [`backdrop`]   — applies Mica/Acrylic and Windows 11 frame attributes.
 //! * [`source`]     — attributes a clipboard change to the application that made it.
 //! * [`paste`]      — restores focus to the previous app and synthesises Ctrl+V.
+//! * [`apps`]       — discovers stable identities for application exclusions.
 
 #[cfg(not(test))]
 pub mod appearance;
+#[cfg(not(test))]
+pub mod apps;
 #[cfg(not(test))]
 pub mod backdrop;
 #[cfg(not(test))]
 pub mod paste;
 pub mod source;
+#[cfg(not(test))]
+pub mod webview_runtime;
 
 use windows::core::PCWSTR;
 

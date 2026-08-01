@@ -59,7 +59,7 @@ export const api = {
   syncState: () => invoke<SyncState>('sync_state'),
   regeneratePairingCode: () => invoke<Settings>('regenerate_pairing_code'),
   quitApp: () => invoke<void>('quit_app'),
-  listInstalledApps: () => invoke<ApplicationInfo[]>('list_installed_apps'),
+  listInstalledApps: (refresh = false) => invoke<ApplicationInfo[]>('list_installed_apps', { refresh }),
   listRunningApps: () => invoke<ApplicationInfo[]>('list_running_apps'),
   resolveApplicationIdentity: (executablePath: string) =>
     invoke<IgnoredApp>('resolve_application_identity', { executablePath }),

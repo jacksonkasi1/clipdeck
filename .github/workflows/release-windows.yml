@@ -47,6 +47,21 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --no-audit
 
+      - name: Validate release scripts and version files
+        shell: pwsh
+        run: |
+          foreach ($script in Get-ChildItem scripts/*.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count) { throw "$($script.Name): $($errors -join '; ')" }
+          }
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = (cargo metadata --format-version 1 --no-deps --locked --manifest-path src-tauri/Cargo.toml | ConvertFrom-Json).packages.Where({$_.name -eq 'clipdeck'}).version
+          if (($packageVersion, $tauriVersion, $cargoVersion | Select-Object -Unique).Count -ne 1) {
+            throw "Version mismatch: package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
+          }
+
       - name: Build frontend
         run: npm run build
 
@@ -83,13 +98,7 @@ jobs:
           --target ${{ env.WINDOWS_TARGET }}
           --bundles nsis
 
-      - name: Smoke-test packaged executable
-        shell: pwsh
-        run: >-
-          ./scripts/smoke-test-windows.ps1
-          -Executable "src-tauri/target/${{ env.WINDOWS_TARGET }}/release/clipdeck.exe"
-
-      - name: Collect and verify release artifacts
+      - name: Build, extract, and smoke-test exact release assets
         id: collect
         shell: pwsh
         env:
@@ -107,11 +116,13 @@ jobs:
             -OutputDirectory "artifacts/windows-x64" `
             -ExpectedVersion $expectedVersion
 
-      - name: Upload verified release bundle
+      - name: Upload only the verified installer and portable ZIP
         uses: actions/upload-artifact@v7
         with:
           name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
-          path: artifacts/windows-x64/
+          path: |
+            artifacts/windows-x64/${{ steps.collect.outputs.installer }}
+            artifacts/windows-x64/${{ steps.collect.outputs.portable }}
           if-no-files-found: error
           retention-days: 90
 
@@ -130,18 +141,30 @@ jobs:
           name: clipdeck-windows-x64-${{ needs.build.outputs.version }}
           path: release-assets
 
-      - name: Create or update GitHub release
+      - name: Create or update GitHub release with only the two distribution assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
+          installer="release-assets/Clipdeck_${RELEASE_VERSION}_x64-setup.exe"
+          portable="release-assets/Clipdeck_${RELEASE_VERSION}_portable_x64.zip"
+          test -s "$installer" && test -s "$portable"
+          test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 2
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+            # A rerun may repair this tag, but it may never retain stale/raw assets.
+            while IFS= read -r asset; do
+              case "$asset" in
+                "$(basename "$installer")"|"$(basename "$portable")") ;;
+                *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY" ;;
+              esac
+            done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' --repo "$GITHUB_REPOSITORY")
+            gh release upload "$RELEASE_TAG" "$installer" "$portable" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$RELEASE_TAG" release-assets/* \
+            gh release create "$RELEASE_TAG" "$installer" "$portable" \
               --verify-tag \
               --generate-notes \
               --title "Clipdeck $RELEASE_VERSION" \
               --repo "$GITHUB_REPOSITORY"
           fi
+          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 2

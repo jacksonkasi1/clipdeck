@@ -630,11 +630,27 @@ CREATE TABLE IF NOT EXISTS settings (
             return Ok(Settings::default());
         };
         let mut value: serde_json::Value = serde_json::from_str(&json).unwrap_or_default();
-        if value.get("settingsVersion").is_none() {
-            value["settingsVersion"] = serde_json::json!(2);
-            value["showPreview"] = serde_json::json!(false);
+        let had_file_filter_mode = value.get("fileFilterMode").is_some();
+        let stored_version = value
+            .get("settingsVersion")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+
+        // Version 3 changed only the default. An explicit All or Include choice
+        // must survive the one-time migration; only legacy blobs with no choice
+        // inherit the safer Exclude default.
+        if stored_version < 3 {
+            if !had_file_filter_mode {
+                value["fileFilterMode"] = serde_json::json!("exclude");
+            }
+            value["settingsVersion"] = serde_json::json!(3);
         }
-        Ok(serde_json::from_value(value).unwrap_or_default())
+
+        sanitize_settings_enums(&mut value);
+        let defaults = serde_json::to_value(Settings::default())
+            .map_err(|error| crate::error::Error::Other(error.to_string()))?;
+        merge_valid_settings(&mut value, &defaults);
+        serde_json::from_value(value).map_err(|error| crate::error::Error::Other(error.to_string()))
     }
 
     pub fn save_settings(&self, settings: &Settings) -> Result<()> {
@@ -980,6 +996,63 @@ fn fts_match_expression(search: &str) -> Option<String> {
     }
 }
 
+fn sanitize_settings_enums(value: &mut serde_json::Value) {
+    let Some(settings) = value.as_object_mut() else {
+        return;
+    };
+    for (field, allowed) in [
+        ("fileFilterMode", &["all", "include", "exclude"][..]),
+        ("imageFormat", &["original", "png", "jpeg", "webp"][..]),
+        (
+            "imageCompression",
+            &["none", "normal", "best", "manual"][..],
+        ),
+        ("backdrop", &["acrylic", "mica", "solid"][..]),
+        ("theme", &["system", "light", "dark"][..]),
+    ] {
+        if settings
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !allowed.contains(&value))
+        {
+            settings.remove(field);
+        }
+    }
+}
+
+/// Merge persisted settings field-by-field. Missing or type-invalid fields use
+/// their current defaults without discarding unrelated valid preferences.
+fn merge_valid_settings(value: &mut serde_json::Value, defaults: &serde_json::Value) {
+    let (Some(current), Some(defaults)) = (value.as_object_mut(), defaults.as_object()) else {
+        *value = defaults.clone();
+        return;
+    };
+    for (key, fallback) in defaults {
+        match current.get_mut(key) {
+            None => {
+                current.insert(key.clone(), fallback.clone());
+            }
+            Some(existing) if !same_json_shape(existing, fallback) => {
+                *existing = fallback.clone();
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+fn same_json_shape(value: &serde_json::Value, fallback: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    matches!(
+        (value, fallback),
+        (Value::Null, Value::Null)
+            | (Value::Bool(_), Value::Bool(_))
+            | (Value::Number(_), Value::Number(_))
+            | (Value::String(_), Value::String(_))
+            | (Value::Array(_), Value::Array(_))
+            | (Value::Object(_), Value::Object(_))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1289,6 +1362,79 @@ mod tests {
         let loaded = db.load_settings().unwrap();
         assert_eq!(loaded.hotkey, "Ctrl+Alt+C");
         assert_eq!(loaded.max_items, 42);
+    }
+
+    #[test]
+    fn legacy_settings_without_filter_migrate_to_exclude() {
+        let db = Db::open_in_memory().unwrap();
+        db.conn
+            .lock()
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('app', ?1)",
+                params![r#"{"hotkey":"Alt+V","maxItems":17}"#],
+            )
+            .unwrap();
+        let loaded = db.load_settings().unwrap();
+        assert_eq!(
+            loaded.file_filter_mode,
+            crate::models::FileFilterMode::Exclude
+        );
+        assert_eq!(loaded.hotkey, "Alt+V");
+        assert_eq!(loaded.max_items, 17);
+        assert_eq!(loaded.settings_version, 3);
+    }
+
+    #[test]
+    fn migration_preserves_explicit_all_and_include() {
+        for mode in ["all", "include"] {
+            let db = Db::open_in_memory().unwrap();
+            let raw = format!(r#"{{"settingsVersion":2,"fileFilterMode":"{mode}"}}"#);
+            db.conn
+                .lock()
+                .execute(
+                    "INSERT INTO settings (key, value) VALUES ('app', ?1)",
+                    params![raw],
+                )
+                .unwrap();
+            assert_eq!(
+                serde_json::to_value(db.load_settings().unwrap().file_filter_mode).unwrap(),
+                serde_json::json!(mode)
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_field_type_uses_default_without_wiping_valid_fields() {
+        let db = Db::open_in_memory().unwrap();
+        db.conn
+            .lock()
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('app', ?1)",
+                params![r#"{"settingsVersion":3,"hotkey":"Alt+V","maxItems":"bad"}"#],
+            )
+            .unwrap();
+        let loaded = db.load_settings().unwrap();
+        assert_eq!(loaded.hotkey, "Alt+V");
+        assert_eq!(loaded.max_items, Settings::default().max_items);
+    }
+
+    #[test]
+    fn invalid_enum_and_null_fields_use_defaults_without_wiping_valid_fields() {
+        let db = Db::open_in_memory().unwrap();
+        db.conn
+            .lock()
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('app', ?1)",
+                params![r#"{"settingsVersion":3,"hotkey":"Alt+V","fileFilterMode":"unsafe","theme":null}"#],
+            )
+            .unwrap();
+        let loaded = db.load_settings().unwrap();
+        assert_eq!(loaded.hotkey, "Alt+V");
+        assert_eq!(
+            loaded.file_filter_mode,
+            crate::models::FileFilterMode::Exclude
+        );
+        assert_eq!(loaded.theme, Settings::default().theme);
     }
 
     #[test]

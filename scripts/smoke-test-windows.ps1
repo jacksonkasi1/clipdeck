@@ -2,6 +2,7 @@
 param(
     [Parameter(Mandatory)]
     [string]$Executable,
+    [string]$WorkingDirectory = '',
     [ValidateRange(2, 30)]
     [int]$StartupTimeoutSeconds = 6
 )
@@ -18,7 +19,17 @@ if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
     throw "Clipdeck executable was not found: $executablePath"
 }
 
-$process = Start-Process -FilePath $executablePath -PassThru -WindowStyle Hidden
+if (-not $WorkingDirectory) { $WorkingDirectory = Split-Path -Parent $executablePath }
+$workingDirectoryPath = if ([System.IO.Path]::IsPathRooted($WorkingDirectory)) {
+    [System.IO.Path]::GetFullPath($WorkingDirectory)
+} else {
+    [System.IO.Path]::GetFullPath((Join-Path $projectRoot $WorkingDirectory))
+}
+if (-not (Test-Path -LiteralPath $workingDirectoryPath -PathType Container)) {
+    throw "Smoke-test working directory was not found: $workingDirectoryPath"
+}
+
+$process = Start-Process -FilePath $executablePath -WorkingDirectory $workingDirectoryPath -PassThru -WindowStyle Hidden
 
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)

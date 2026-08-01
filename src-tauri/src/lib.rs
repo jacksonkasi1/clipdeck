@@ -14,6 +14,7 @@ use tauri::{Manager, WindowEvent};
 #[cfg(not(test))]
 use tauri_plugin_autostart::MacosLauncher;
 
+pub mod capture_policy;
 pub mod clipboard;
 #[cfg(not(test))]
 pub mod commands;
@@ -46,6 +47,9 @@ pub struct AppState {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[cfg(not(test))]
 pub fn run() {
+    if !crate::win::webview_runtime::ensure_available() {
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
@@ -76,6 +80,10 @@ pub fn run() {
             commands::save_settings,
             commands::change_storage_location,
             commands::prune_now,
+            commands::list_installed_apps,
+            commands::list_running_apps,
+            commands::resolve_application_identity,
+            commands::extract_application_icon,
             commands::appearance,
             commands::open_settings_window,
             commands::open_external_url,

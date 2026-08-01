@@ -817,7 +817,7 @@ async function discoverApplications(refresh = false): Promise<ApplicationInfo[]>
   }
   if (applicationCache) return applicationCache;
   if (!applicationRequest) {
-    applicationRequest = Promise.all([api.listRunningApps(), api.listInstalledApps()])
+    applicationRequest = Promise.all([api.listRunningApps(), api.listInstalledApps(refresh)])
       .then(([running, installed]) => {
         applicationCache = dedupeApplications([...running, ...installed]);
         return applicationCache;

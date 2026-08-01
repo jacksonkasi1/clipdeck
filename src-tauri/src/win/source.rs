@@ -21,7 +21,9 @@ use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Shell::ExtractIconW;
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, GA_ROOTOWNER,
+};
 
 use crate::models::SourceApp;
 
@@ -44,11 +46,30 @@ pub fn current_foreground() -> isize {
 ///
 /// `hint` is an optional foreground window captured before the popup appeared.
 pub fn resolve(hint: Option<isize>) -> Option<SourceApp> {
-    if let Some(app) = from_hwnd(get_clipboard_owner_hwnd()) {
-        return Some(app);
+    let owner = get_clipboard_owner_hwnd();
+    let owner_pid = pid_for_hwnd(owner);
+    let root_owner = root_owner(owner);
+    let candidates = [
+        owner_pid,
+        pid_for_hwnd(root_owner),
+        hint.and_then(pid_for_hwnd),
+    ];
+
+    for pid in candidates.into_iter().flatten() {
+        if let Some(app) = from_pid(map_webview_to_host(pid)) {
+            #[cfg(debug_assertions)]
+            log::debug!(
+                "source_resolution resolved=true pid={} executable={}",
+                pid,
+                Path::new(&app.exe_path)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("unknown")
+            );
+            return Some(app);
+        }
     }
-    let hwnd = hint?;
-    from_hwnd(hwnd)
+    None
 }
 
 fn get_clipboard_owner_hwnd() -> isize {
@@ -61,41 +82,109 @@ fn get_clipboard_owner_hwnd() -> isize {
     }
 }
 
-fn from_hwnd(hwnd: isize) -> Option<SourceApp> {
+fn pid_for_hwnd(hwnd: isize) -> Option<u32> {
     if hwnd == 0 {
         return None;
     }
-    let hwnd = HWND(hwnd as *mut _);
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(HWND(hwnd as *mut _), Some(&mut pid)) };
+    (pid != 0).then_some(pid)
+}
 
+fn root_owner(hwnd: isize) -> isize {
+    if hwnd == 0 {
+        return 0;
+    }
+    let root = unsafe { GetAncestor(HWND(hwnd as *mut _), GA_ROOTOWNER) };
+    if root.0.is_null() {
+        hwnd
+    } else {
+        root.0 as isize
+    }
+}
+
+fn from_pid(pid: u32) -> Option<SourceApp> {
+    let path = process_path(pid)?;
+    let name = display_name(&path);
+    let icon_path = extract_icon(&path);
+    Some(SourceApp {
+        name,
+        exe_path: path.to_string_lossy().to_string(),
+        icon_path,
+    })
+}
+
+pub(crate) fn process_path(pid: u32) -> Option<PathBuf> {
     unsafe {
-        let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == 0 {
-            return None;
-        }
-
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buffer = [0u16; 1024];
         let mut size = buffer.len() as u32;
-        let ok = QueryFullProcessImageNameW(
+        let result = QueryFullProcessImageNameW(
             process,
             PROCESS_NAME_FORMAT(0),
             windows::core::PWSTR(buffer.as_mut_ptr()),
             &mut size,
         );
         let _ = CloseHandle(process);
-        ok.ok()?;
-
-        let path = PathBuf::from(from_wide(&buffer[..size as usize]));
-        let name = display_name(&path);
-        let icon_path = extract_icon(&path);
-
-        Some(SourceApp {
-            name,
-            exe_path: path.to_string_lossy().to_string(),
-            icon_path,
-        })
+        result.ok()?;
+        Some(PathBuf::from(from_wide(&buffer[..size as usize])))
     }
+}
+
+fn map_webview_to_host(pid: u32) -> u32 {
+    let Some(path) = process_path(pid) else {
+        return pid;
+    };
+    if !is_webview_process(&path) {
+        return pid;
+    }
+
+    let system = sysinfo::System::new_all();
+    let mut current = sysinfo::Pid::from_u32(pid);
+    let mut ancestors = Vec::new();
+    let mut ancestor_pids = Vec::new();
+    for _ in 0..16 {
+        let Some(parent) = system.process(current).and_then(sysinfo::Process::parent) else {
+            break;
+        };
+        let Some(process) = system.process(parent) else {
+            break;
+        };
+        let Some(parent_path) = process.exe() else {
+            break;
+        };
+        ancestors.push(parent_path.to_string_lossy().into_owned());
+        ancestor_pids.push(parent.as_u32());
+        current = parent;
+    }
+    crate::capture_policy::webview_host_index(&path.to_string_lossy(), &ancestors)
+        .and_then(|index| ancestor_pids.get(index).copied())
+        .unwrap_or(pid)
+}
+
+fn is_webview_process(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("msedgewebview2.exe")
+                || name.eq_ignore_ascii_case("webviewhost.exe")
+        })
+}
+
+pub(crate) fn is_current_process(path: &str) -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    normalize_path(&current) == normalize_path(Path::new(path))
+}
+
+pub(crate) fn normalize_path(path: &Path) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
 }
 
 fn display_name(path: &Path) -> String {
