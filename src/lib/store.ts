@@ -392,16 +392,25 @@ export const useStore = create<State & Actions>((set, get) => ({
     return next;
   },
 
-  /**
-   * Applies a preview change to this window only. The native side resizes the
-   * calling window and persists the matching per-window preference.
-   */
+  /** Applies and persists the preview preference belonging to this window. */
   setShowPreview: async (show) => {
+    const state = get();
+    const previous = state.showPreview;
     set({ showPreview: show });
     try {
       await api.setPreviewVisible(show);
+      if (state.mode === 'full' && state.settings) {
+        await get().saveSettings({ ...state.settings, showPreview: show });
+      }
     } catch (error) {
+      set({ showPreview: previous });
       console.error('Failed to apply the preview layout', error);
+      try {
+        const { toast } = await import('./toast');
+        toast('The preview layout could not be changed.', 'error');
+      } catch {
+        // The toast surface is optional; state rollback is the important part.
+      }
     }
   },
   setShowDetails: (show) => set({ showDetails: show }),

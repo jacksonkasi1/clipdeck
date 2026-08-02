@@ -2,7 +2,7 @@
 import type { Backdrop } from './lib/types';
 
 // ** import lib
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CommandPalette } from './components/CommandPalette';
 import { DetailsTable } from './components/DetailsTable';
@@ -15,8 +15,6 @@ import { useStore } from './lib/store';
 import { api, on } from './lib/tauri';
 import { applyTheme } from './lib/theme';
 import { ToastSurface } from './lib/toast';
-
-let readinessSignaled = false;
 
 export default function App() {
   const mode = useStore((s) => s.mode);
@@ -40,6 +38,7 @@ export default function App() {
   const deleteItem = useStore((s) => s.deleteItem);
   const deleteSelected = useStore((s) => s.deleteSelected);
   const clearHistory = useStore((s) => s.clearHistory);
+  const readinessSignaled = useRef(false);
   // The shell is visible by default. This class only restarts a bounded inner
   // animation after Rust confirms the already-rendered quick window was shown.
   const [quickEntering, setQuickEntering] = useState(false);
@@ -209,18 +208,42 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!bootstrapped || readinessSignaled) return;
-    const search = document.querySelector<HTMLInputElement>('.search-header input[type="search"]');
-    const layout = document.querySelector<HTMLElement>('.history-pane');
-    const searchVisible = Boolean(search && search.getBoundingClientRect().height > 0);
-    const layoutVisible = Boolean(layout && layout.getBoundingClientRect().height > 0);
-    if (!searchVisible || !layoutVisible) return;
+    if (!bootstrapped || readinessSignaled.current) return;
 
-    readinessSignaled = true;
-    void api.signalFrontendReady(searchVisible, layoutVisible).catch((error: unknown) => {
-      readinessSignaled = false;
-      console.error(`Failed to signal ${mode} frontend readiness`, error);
-    });
+    let cancelled = false;
+    let retry: number | undefined;
+    const deadline = Date.now() + 30_000;
+
+    function scheduleRetry(delay: number) {
+      if (cancelled || readinessSignaled.current || Date.now() >= deadline) return;
+      retry = window.setTimeout(signalWhenReady, delay);
+    }
+
+    function signalWhenReady() {
+      if (cancelled || readinessSignaled.current) return;
+      const search = document.querySelector<HTMLInputElement>('.search-header input[type="search"]');
+      const layout = document.querySelector<HTMLElement>('.history-pane');
+      const searchVisible = Boolean(search && search.getBoundingClientRect().height > 0);
+      const layoutVisible = Boolean(layout && layout.getBoundingClientRect().height > 0);
+      if (!searchVisible || !layoutVisible) {
+        scheduleRetry(100);
+        return;
+      }
+
+      void api.signalFrontendReady(searchVisible, layoutVisible).then(() => {
+        if (!cancelled) readinessSignaled.current = true;
+      }).catch((error: unknown) => {
+        if (cancelled) return;
+        console.error(`Failed to signal ${mode} frontend readiness`, error);
+        scheduleRetry(250);
+      });
+    }
+
+    signalWhenReady();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retry);
+    };
   }, [bootstrapped, mode]);
 
   const frameClasses = [
