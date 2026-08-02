@@ -49,6 +49,11 @@ pub fn read_styles(window: &WebviewWindow) -> Result<StyleSnapshot, String> {
 /// hidden window warms up, so the final HWND is authoritative. Returns the
 /// styles observed immediately after enforcement.
 pub fn enforce_quick_flyout(window: &WebviewWindow) -> Result<StyleSnapshot, String> {
+    // On Windows Tauri deliberately adds a white frame when shadow is enabled
+    // for an undecorated window. Disable it both in configuration and here so a
+    // hidden warm webview cannot restore it during Acrylic or focus changes.
+    window.set_shadow(false).map_err(|error| error.to_string())?;
+
     let hwnd = window.hwnd().map_err(|error| error.to_string())?;
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -74,5 +79,10 @@ pub fn enforce_quick_flyout(window: &WebviewWindow) -> Result<StyleSnapshot, Str
         )
         .map_err(|error| error.to_string())?;
     }
+
+    // `SWP_FRAMECHANGED` can reset DWM's border policy. Reapply it only after
+    // the final frame calculation so the flyout keeps small rounded corners
+    // without the white non-client edge.
+    crate::win::backdrop::apply_quick_frame(window);
     Ok(snapshot(hwnd))
 }
