@@ -88,6 +88,9 @@ $versions = @([string]$packageJson.version, $cargoVersion, $version, $lockVersio
 if ($versions -contains '' -or ($versions | Select-Object -Unique).Count -ne 1) {
     throw "Version mismatch: package.json=$($packageJson.version), Cargo.toml=$cargoVersion, tauri.conf.json=$version, Cargo.lock=$lockVersion."
 }
+if ([string]$tauriConfig.productName -ne 'Clipmo') {
+    throw "Tauri productName must be Clipmo; got '$($tauriConfig.productName)'."
+}
 if ($ExpectedVersion -and $version -ne $ExpectedVersion) {
     throw "Release tag version $ExpectedVersion does not match application version $version."
 }
@@ -103,8 +106,8 @@ if (-not $TargetDirectory) {
 $targetRoot = Resolve-ProjectPath $TargetDirectory
 $outputRoot = Resolve-ProjectPath $OutputDirectory
 $releaseRoot = Join-Path $targetRoot "$TargetTriple/release"
-$executablePath = Join-Path $releaseRoot 'clipdeck.exe'
-$installerName = "Clipdeck_${version}_x64-setup.exe"
+$executablePath = Join-Path $releaseRoot 'clipmo.exe'
+$installerName = "Clipmo_${version}_x64-setup.exe"
 $installerPath = Join-Path $releaseRoot "bundle/nsis/$installerName"
 
 foreach ($path in @($executablePath, $installerPath)) {
@@ -114,7 +117,7 @@ foreach ($path in @($executablePath, $installerPath)) {
 }
 $null = Get-PeInfo $executablePath
 
-# Portable publication is intentionally disabled until Clipdeck can bootstrap
+# Portable publication is intentionally disabled until Clipmo can bootstrap
 # WebView2 itself. Installed builds rely on Tauri's NSIS downloadBootstrapper.
 if (Test-Path $outputRoot) { Remove-Item -LiteralPath $outputRoot -Recurse -Force }
 New-Item -ItemType Directory -Path $outputRoot | Out-Null
@@ -124,8 +127,8 @@ if ((Get-Item $installerOutput).Length -gt ([int64]$MaxInstallerSizeMb * 1MB)) {
     throw "Installer exceeds $MaxInstallerSizeMb MB: $installerOutput"
 }
 
-$mainScreenshotName = "Clipdeck_${version}_main-startup.png"
-$quickScreenshotName = "Clipdeck_${version}_quick-startup.png"
+$mainScreenshotName = "Clipmo_${version}_main-startup.png"
+$quickScreenshotName = "Clipmo_${version}_quick-startup.png"
 $mainScreenshotPath = Join-Path $outputRoot $mainScreenshotName
 $quickScreenshotPath = Join-Path $outputRoot $quickScreenshotName
 if (-not $SkipSmokeTest) {
@@ -135,7 +138,7 @@ if (-not $SkipSmokeTest) {
         -QuickScreenshot $quickScreenshotPath
 }
 
-Write-Host "Verified exact release installer for Clipdeck ${version}:"
+Write-Host "Verified exact release installer for Clipmo ${version}:"
 Get-ChildItem -LiteralPath $outputRoot | Format-Table Name, Length
 
 if ($env:GITHUB_OUTPUT) {
