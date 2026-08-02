@@ -88,6 +88,7 @@ export default function Settings() {
   }, [settings]);
 
   useEffect(() => {
+    document.title = 'Clipmo Settings';
     applyTheme(local?.theme ?? 'system', appearance);
     document.documentElement.dataset.backdrop = local?.backdrop ?? 'acrylic';
   }, [local?.theme, local?.backdrop, appearance]);
@@ -141,7 +142,7 @@ export default function Settings() {
       const selected = await api.chooseStorageFolder();
       if (typeof selected !== 'string') return;
       const approved = await api.confirm(
-        'Clipdeck will copy and verify managed content before switching locations. Original files are never moved or deleted.',
+        'Clipmo will copy and verify managed content before switching locations. Original files are never moved or deleted.',
         'Change storage location',
       );
       if (!approved) return;
@@ -190,7 +191,7 @@ export default function Settings() {
       <header className="settings-header">
         <span className="settings-app-icon"><Settings2 size={21} aria-hidden /></span>
         <div>
-          <h1>Clipdeck settings</h1>
+          <h1>Clipmo settings</h1>
           <p>Appearance, capture, storage, and history controls</p>
         </div>
       </header>
@@ -229,8 +230,8 @@ export default function Settings() {
         )}
 
         {activeCategory === 'capture' && (
-        <Section title="Capture" description="Choose what Clipdeck remembers locally." icon={<Database size={18} />}>
-          <Row id="capture-images" label="Capture images" description="Save image bytes and fast thumbnails in Clipdeck storage.">
+        <Section title="Capture" description="Choose what Clipmo remembers locally." icon={<Database size={18} />}>
+          <Row id="capture-images" label="Capture images" description="Save image bytes and fast thumbnails in Clipmo storage.">
             <Toggle checked={local.captureImages} onChange={(value) => update('captureImages', value)} />
           </Row>
           <Row id="image-format" label="Stored image format" description="PNG keeps exact pixels; JPEG is smaller for photos; WebP offers compact lossless storage.">
@@ -327,7 +328,7 @@ export default function Settings() {
           <Row
             id="storage-location"
             label="Managed storage location"
-            description="Changing it copies, verifies, switches, then removes only old Clipdeck-managed copies."
+            description="Changing it copies, verifies, switches, then removes only old Clipmo-managed copies."
           >
             <div className="storage-location-actions">
               <StorageLocationButton
@@ -335,7 +336,7 @@ export default function Settings() {
                 path={local.storagePath}
                 onClick={() => void chooseStorage()}
               />
-              <button type="button" className="storage-open-button" title="Open Clipdeck storage in File Explorer" aria-label="Open Clipdeck storage in File Explorer" onClick={() => void api.openStorageFolder().catch((error: unknown) => setMutationError(mutationErrorMessage('Storage folder could not be opened.', error)))}>
+              <button type="button" className="storage-open-button" title="Open Clipmo storage in File Explorer" aria-label="Open Clipmo storage in File Explorer" onClick={() => void api.openStorageFolder().catch((error: unknown) => setMutationError(mutationErrorMessage('Storage folder could not be opened.', error)))}>
                 <FolderOpen size={16} aria-hidden />
               </button>
             </div>
@@ -374,7 +375,7 @@ export default function Settings() {
 
         {activeCategory === 'sync' && (
         <Section title="Cross-device sync" description="Pair trusted devices on the same local network." icon={<Wifi size={18} />}>
-          <Row id="sync-enabled" label="LAN sync" description="Discover paired Clipdeck devices and exchange text-like clipboard entries.">
+          <Row id="sync-enabled" label="LAN sync" description="Discover paired Clipmo devices and exchange text-like clipboard entries.">
             <Toggle checked={local.syncEnabled} onChange={(value) => update('syncEnabled', value)} />
           </Row>
           <Row id="sync-device-name" label="Device name" description="Shown beside history items copied from this device.">
@@ -418,8 +419,6 @@ export default function Settings() {
           description={`${getPlatform() === 'macos' ? 'macOS' : 'Windows'} key labels are used in this build.`}
           icon={<Keyboard size={18} />}
         >
-          {/* Two distinct global actions. Labelling both "Open Clipdeck" made
-              it impossible to tell which window a shortcut would summon. */}
           <Row
             id="global-hotkey"
             label="Quick clipboard"
@@ -429,7 +428,7 @@ export default function Settings() {
           </Row>
           <Row
             id="full-window-hotkey"
-            label="Open full Clipdeck"
+            label="Open full Clipmo"
             description={`Opens the full application window. ${SHORTCUT_RECORDER_DESCRIPTION}`}
           >
             <ShortcutRecorder
@@ -439,7 +438,7 @@ export default function Settings() {
           </Row>
           {local.hotkey.toLowerCase() === local.fullWindowHotkey.toLowerCase() && (
             <p className="settings-validation-error" role="alert">
-              “Quick clipboard” and “Open full Clipdeck” cannot use the same shortcut.
+              “Quick clipboard” and “Open full Clipmo” cannot use the same shortcut.
             </p>
           )}
           <div className="shortcut-reference" aria-label="Keyboard shortcut reference">
@@ -463,7 +462,7 @@ export default function Settings() {
             <Row id="launch-at-login" label="Launch at login" description="Start minimized and monitor the clipboard after sign-in.">
               <Toggle checked={local.launchAtLogin} onChange={(value) => update('launchAtLogin', value)} />
             </Row>
-            <Row id="ignored-apps" label="Ignored applications" description="Choose installed applications whose clipboard content Clipdeck should never save.">
+            <Row id="ignored-apps" label="Ignored applications" description="Choose installed applications whose clipboard content Clipmo should never save.">
               <IgnoredApplications
                 value={local.ignoredApps}
                 onChange={(value) => update('ignoredApps', value)}
