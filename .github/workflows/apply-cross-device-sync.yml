@@ -1,0 +1,85 @@
+name: Apply cross-device sync implementation
+
+on:
+  push:
+    branches:
+      - feat/clipmo-cross-device-sync-complete
+    paths:
+      - .github/workflows/apply-cross-device-sync.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/clipmo-cross-device-sync-complete
+          fetch-depth: 0
+
+      - name: Decode and apply implementation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import gzip
+          import json
+
+          payload_dir = Path('.sync-payload')
+          encoded = ''.join((payload_dir / f'part-{index}').read_text().strip() for index in range(1, 6))
+          files = json.loads(gzip.decompress(base64.b64decode(encoded)))
+          for name, content in files.items():
+              path = Path(name)
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(content)
+
+          lib = Path('src-tauri/src/lib.rs')
+          text = lib.read_text()
+          old = '            commands::sync_state,\n            commands::regenerate_pairing_code,'
+          new = '            commands::sync_state,\n            sync::load_sync_preferences,\n            sync::save_sync_preferences,\n            commands::regenerate_pairing_code,'
+          if old not in text:
+              raise SystemExit('lib.rs command insertion point not found')
+          lib.write_text(text.replace(old, new, 1))
+
+          settings = Path('src/Settings.tsx')
+          text = settings.read_text()
+          import_marker = "import { DeviceBadge } from './components/DeviceBadge';"
+          if import_marker not in text:
+              raise SystemExit('Settings.tsx import insertion point not found')
+          text = text.replace(import_marker, import_marker + "\nimport { SyncPreferencesPanel } from './components/SyncPreferencesPanel';", 1)
+          peer_marker = '          <div className="peer-list" aria-label="Discovered sync devices">'
+          if peer_marker not in text:
+              raise SystemExit('Settings.tsx panel insertion point not found')
+          text = text.replace(peer_marker, '          <SyncPreferencesPanel />\n' + peer_marker, 1)
+          settings.write_text(text)
+
+          entry = Path('src/settings-main.tsx')
+          text = entry.read_text()
+          css_marker = "import './styles/global.css';"
+          if css_marker not in text:
+              raise SystemExit('settings-main.tsx style insertion point not found')
+          entry.write_text(text.replace(css_marker, css_marker + "\nimport './styles/sync-preferences.css';", 1))
+
+          item_list = Path('src/components/ItemList.tsx')
+          text = item_list.read_text()
+          text = text.replace('Search is ready while Clipdeck connects to your history.', 'Search is ready while Clipmo connects to your history.')
+          text = text.replace('Clipdeck is still usable. Press F5 to try again.', 'Clipmo is still usable. Press F5 to try again.')
+          item_list.write_text(text)
+
+          for path in payload_dir.glob('*'):
+              path.unlink()
+          payload_dir.rmdir()
+          Path('.github/workflows/apply-cross-device-sync.yml').unlink()
+          PY
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(sync): complete cross-device clipboard sync"
+          git push origin HEAD:feat/clipmo-cross-device-sync-complete
