@@ -3,6 +3,7 @@
   "version": "0.2.1",
   "private": true,
   "description": "Clipmo — a fast, private clipboard history manager for Windows",
+  "author": "Jackson Kasi",
   "type": "module",
   "scripts": {
     "dev": "vite",
