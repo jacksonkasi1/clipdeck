@@ -18,6 +18,8 @@ This branch completes the desktop same-network sync work planned for the Clipmo 
 - ✅ Rust tests cover safe defaults, file filtering, conflict ordering, queue bounds, and path sanitization.
 - ✅ Sync watcher paths follow the repository's strict Clippy policy without local lint exceptions.
 - ✅ Quick-window startup retries transient history-load races before showing a persistent failure.
+- ✅ The undecorated Quick Clipboard disables Tauri's Windows shadow and CI rejects any returned white outer frame.
+- ✅ Windows package metadata identifies Jackson Kasi as publisher, with optional trusted Authenticode signing from repository certificate secrets.
 
 ## Defaults
 
@@ -33,5 +35,6 @@ This branch completes the desktop same-network sync work planned for the Clipmo 
 - ⬜ Android and iOS clipboard integrations.
 - ⬜ Replace the LAN PIN trust boundary with certificate-pinned mTLS.
 - ⬜ Manual QA with two physical devices across Windows/macOS/Linux builds as those packages become available.
+- ⬜ Add a trusted Windows code-signing certificate secret if the release workflow reports an unsigned build.
 
-Verification runs from this branch so the exact reviewed commit produces the installer and screenshots. GitHub Actions must keep frontend tests/build, Rust formatting, Clippy with warnings denied, Rust tests, NSIS packaging, installed-app smoke tests, and artifact screenshots green before merge.
+Verification runs from this branch so the exact reviewed commit produces the installer and screenshots. GitHub Actions must keep frontend tests/build, Rust formatting, Clippy with warnings denied, Rust tests, NSIS packaging, Authenticode verification, installed-app smoke tests, white-frame screenshot checks, and artifact upload green before merge.
