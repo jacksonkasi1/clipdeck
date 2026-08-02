@@ -1,0 +1,97 @@
+name: Fix sync Clippy findings
+
+on:
+  push:
+    branches:
+      - feat/clipmo-cross-device-sync-complete
+    paths:
+      - .github/workflows/fix-sync-clippy.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/clipmo-cross-device-sync-complete
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          components: rustfmt
+
+      - name: Apply Clippy fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src-tauri/src/sync.rs')
+          text = path.read_text()
+          replacements = {
+          '''                    if before.content_hash != row.content_hash || before.content != row.content {
+                        if !consume_edit_suppression(&service, id_hash, &row.content_hash) {
+                            service.enqueue_edit(row);
+                        }
+                    }
+''': '''                    if (before.content_hash != row.content_hash || before.content != row.content)
+                        && !consume_edit_suppression(&service, id_hash, &row.content_hash)
+                    {
+                        service.enqueue_edit(row);
+                    }
+''',
+          '''                    if before.favorite != row.favorite {
+                        if !consume_favorite_suppression(&service, id_hash, row.favorite) {
+                            service.enqueue_favorite(row);
+                        }
+                    }
+''': '''                    if before.favorite != row.favorite
+                        && !consume_favorite_suppression(&service, id_hash, row.favorite)
+                    {
+                        service.enqueue_favorite(row);
+                    }
+''',
+          '''                    if before.assets_fingerprint != row.assets_fingerprint
+                        && row.kind == ItemKind::Files
+                    {
+                        if !consume_asset_suppression(&service, id_hash) {
+                            if let Some(db) = &service.db {
+                                if let Ok(Some(item)) = db.get(row.item_id) {
+                                    service.enqueue_item(&item);
+                                }
+                            }
+                        }
+                    }
+''': '''                    if before.assets_fingerprint != row.assets_fingerprint
+                        && row.kind == ItemKind::Files
+                        && !consume_asset_suppression(&service, id_hash)
+                    {
+                        if let Some(db) = &service.db {
+                            if let Ok(Some(item)) = db.get(row.item_id) {
+                                service.enqueue_item(&item);
+                            }
+                        }
+                    }
+''',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit('expected sync.rs Clippy block not found')
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          rm .github/workflows/fix-sync-clippy.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(sync): satisfy strict Clippy checks"
+          git push origin HEAD:feat/clipmo-cross-device-sync-complete
