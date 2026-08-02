@@ -46,23 +46,15 @@ export function SearchBar() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // The event can be retargeted at `window` itself, which has no `matches`.
       const target = e.target instanceof HTMLElement ? e.target : null;
       if (e.defaultPrevented || target?.matches('textarea, [contenteditable="true"]')) return;
       if (e.key === 'Escape') {
         if (showCommands) return;
-        // In the flyout Escape is an unconditional dismiss on the first press.
-        // Clearing the search first would leave a transient popup stranded on
-        // screen, which is not how a Windows flyout behaves.
         if (mode === 'quick') {
           e.preventDefault();
           void api.hideWindow();
           return;
         }
-        // The full application is a normal window: Escape is a search-scoped
-        // key that clears the query and then releases focus. It must never
-        // hide the application, because there would be no visible way back
-        // other than the tray.
         if (search) {
           e.preventDefault();
           void setSearch('');
@@ -99,19 +91,14 @@ export function SearchBar() {
         }, 0);
       }
     };
-    window.addEventListener('clipdeck:focus-search', focusSearch);
-    // A hidden warm WebView can miss the native quick-open event while its event
-    // subscription is still settling. Native window focus is an independent,
-    // browser-level fallback that fires after the flyout is actually visible.
+    window.addEventListener('clipmo:focus-search', focusSearch);
     if (mode === 'quick') window.addEventListener('focus', focusSearch);
     return () => {
-      window.removeEventListener('clipdeck:focus-search', focusSearch);
+      window.removeEventListener('clipmo:focus-search', focusSearch);
       window.removeEventListener('focus', focusSearch);
     };
   }, [mode]);
 
-  // The header *is* the search field, so a click anywhere in its empty area
-  // has to land in the input. Buttons keep their own behaviour.
   const focusFromHeader = (event: MouseEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest('button')) return;
     event.preventDefault();
