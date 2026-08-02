@@ -66,14 +66,14 @@ jobs:
             if ($errors.Count) { throw "$($script.Name): $($errors -join '; ')" }
           }
           $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $tauriVersion = $tauri.version
+          if ($tauri.productName -ne 'Clipmo') { throw "Expected Tauri productName Clipmo; got $($tauri.productName)" }
           $cargoVersion = (cargo metadata --format-version 1 --no-deps --locked --manifest-path src-tauri/Cargo.toml | ConvertFrom-Json).packages.Where({$_.name -eq 'clipdeck'}).version
           if (($packageVersion, $tauriVersion, $cargoVersion | Select-Object -Unique).Count -ne 1) {
             throw "Version mismatch: package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"
           }
 
-      # Tauri runs npm run build once via build.beforeBuildCommand. Keeping the
-      # command in tauri.conf.json preserves local `tauri build` behavior.
       - name: Test frontend
         run: npm test
 
@@ -128,7 +128,7 @@ jobs:
       - name: Upload the verified installer and main/quick screenshots
         uses: actions/upload-artifact@v7
         with:
-          name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}
+          name: clipmo-windows-x64-${{ steps.collect.outputs.version }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
             artifacts/windows-x64/${{ steps.collect.outputs.main_screenshot }}
@@ -148,7 +148,7 @@ jobs:
       - name: Download verified release bundle
         uses: actions/download-artifact@v8
         with:
-          name: clipdeck-windows-x64-${{ needs.build.outputs.version }}
+          name: clipmo-windows-x64-${{ needs.build.outputs.version }}
           path: release-assets
 
       - name: Create or update GitHub release with only the verified installer
@@ -157,14 +157,12 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           RELEASE_VERSION: ${{ needs.build.outputs.version }}
         run: |
-          installer="release-assets/Clipdeck_${RELEASE_VERSION}_x64-setup.exe"
-          main_screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_main-startup.png"
-          quick_screenshot="release-assets/Clipdeck_${RELEASE_VERSION}_quick-startup.png"
+          installer="release-assets/Clipmo_${RELEASE_VERSION}_x64-setup.exe"
+          main_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_main-startup.png"
+          quick_screenshot="release-assets/Clipmo_${RELEASE_VERSION}_quick-startup.png"
           test -s "$installer" && test -s "$main_screenshot" && test -s "$quick_screenshot"
           test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq 3
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # Portable publication is disabled until it can bootstrap WebView2
-            # automatically. A rerun removes every stale/raw release asset.
             while IFS= read -r asset; do
               case "$asset" in
                 "$(basename "$installer")") ;;
@@ -176,7 +174,7 @@ jobs:
             gh release create "$RELEASE_TAG" "$installer" \
               --verify-tag \
               --generate-notes \
-              --title "Clipdeck $RELEASE_VERSION" \
+              --title "Clipmo $RELEASE_VERSION" \
               --repo "$GITHUB_REPOSITORY"
           fi
           test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' --repo "$GITHUB_REPOSITORY")" -eq 1
