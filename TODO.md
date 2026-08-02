@@ -16,6 +16,7 @@ This branch completes the desktop same-network sync work planned for the Clipmo 
 - ✅ Bounded newest-wins send queue so slow peers cannot block clipboard capture.
 - ✅ Device badges and peer status remain visible in the existing Clipmo UI.
 - ✅ Rust tests cover safe defaults, file filtering, conflict ordering, queue bounds, and path sanitization.
+- ✅ Sync watcher paths follow the repository's strict Clippy policy without local lint exceptions.
 
 ## Defaults
 
