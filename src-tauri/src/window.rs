@@ -183,7 +183,15 @@ fn show_ready_quick(app: &AppHandle) {
     }
     let _ = window.set_always_on_top(true);
     let _ = window.show();
+    #[cfg(windows)]
+    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+        log::warn!("could not restore quick-window Win32 styles after show: {error}");
+    }
     let _ = window.set_focus();
+    #[cfg(windows)]
+    if let Err(error) = crate::win::window_style::enforce_quick_flyout(&window) {
+        log::warn!("could not restore quick-window Win32 styles after focus: {error}");
+    }
     #[cfg(windows)]
     report_quick_styles(&window, before, enforced);
     // Emitted only after readiness, positioning, material setup, show, and focus.
