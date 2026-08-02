@@ -21,10 +21,10 @@ export const APP_SHORTCUTS: ShortcutDefinition[] = [
   { id: 'delete', label: 'Delete selected item', description: 'Remove one history item.', action: 'deleteItem' },
   { id: 'search', label: 'Focus search', description: 'Search all captured text and metadata.', action: 'search' },
   { id: 'commands', label: 'Show commands', description: 'Open the shortcut and action palette.', action: 'commands' },
-  { id: 'settings', label: 'Open settings', description: 'Open Clipdeck settings.', action: 'settings' },
+  { id: 'settings', label: 'Open settings', description: 'Open Clipmo settings.', action: 'settings' },
   { id: 'preview', label: 'Toggle preview', description: 'Show or hide the preview pane.', action: 'preview' },
   { id: 'clear', label: 'Clear non-favorites', description: 'Clear history while keeping favorites.', action: 'clearHistory' },
-  { id: 'hide', label: 'Hide Clipdeck', description: 'Close the popup without quitting.', keys: ['Esc'] },
+  { id: 'hide', label: 'Hide Clipmo', description: 'Close the popup without quitting.', keys: ['Esc'] },
 ];
 
 export function shortcutKeys(shortcut: ShortcutDefinition): string[] {
