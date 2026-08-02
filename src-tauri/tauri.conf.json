@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Clipdeck",
+  "productName": "Clipmo",
   "version": "0.2.1",
   "identifier": "app.clipdeck.desktop",
   "build": {
@@ -15,10 +15,10 @@
     "windows": [
       {
         "label": "main",
-        "title": "Clipdeck",
+        "title": "Clipmo",
         "url": "index.html?mode=full",
-        "width": 900,
-        "height": 600,
+        "width": 1040,
+        "height": 680,
         "minWidth": 640,
         "minHeight": 460,
         "center": true,
@@ -38,7 +38,7 @@
       },
       {
         "label": "quick",
-        "title": "Clipdeck quick clipboard",
+        "title": "Clipmo quick clipboard",
         "url": "index.html?mode=quick",
         "width": 560,
         "height": 620,
@@ -84,9 +84,9 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "shortDescription": "Blazing fast clipboard history for Windows",
-    "longDescription": "Clipdeck keeps everything you copy — text, links, colors, images and files — and puts it one keystroke away. Native Windows 11 look, instant search, zero telemetry.",
-    "copyright": "Copyright © 2026 Clipdeck",
+    "shortDescription": "Fast, private clipboard history for Windows",
+    "longDescription": "Clipmo keeps everything you copy — text, links, colors, images and files — and puts it one keystroke away. Native Windows 11 look, instant search, zero telemetry.",
+    "copyright": "Copyright © 2026 Clipmo",
     "category": "Productivity",
     "windows": {
       "webviewInstallMode": {
