@@ -17,6 +17,7 @@ This branch completes the desktop same-network sync work planned for the Clipmo 
 - ✅ Device badges and peer status remain visible in the existing Clipmo UI.
 - ✅ Rust tests cover safe defaults, file filtering, conflict ordering, queue bounds, and path sanitization.
 - ✅ Sync watcher paths follow the repository's strict Clippy policy without local lint exceptions.
+- ✅ Quick-window startup retries transient history-load races before showing a persistent failure.
 
 ## Defaults
 
