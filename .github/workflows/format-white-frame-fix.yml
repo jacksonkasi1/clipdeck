@@ -1,0 +1,36 @@
+name: Format Windows frame fix
+
+on:
+  push:
+    branches:
+      - feat/clipmo-cross-device-sync-complete
+    paths:
+      - .github/workflows/format-white-frame-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/clipmo-cross-device-sync-complete
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+          components: rustfmt
+
+      - name: Format and commit
+        shell: bash
+        run: |
+          cargo fmt --manifest-path src-tauri/Cargo.toml --all
+          rm .github/workflows/format-white-frame-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "style(windows): format quick-frame fix"
+          git push origin HEAD:feat/clipmo-cross-device-sync-complete
