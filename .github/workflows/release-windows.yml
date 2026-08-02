@@ -16,6 +16,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: "1"
+  RUST_TOOLCHAIN: "1.97.0"
   WINDOWS_TARGET: x86_64-pc-windows-msvc
 
 jobs:
@@ -41,6 +42,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
           targets: ${{ env.WINDOWS_TARGET }}
 
