@@ -46,9 +46,8 @@ export default function App() {
     document.title = mode === 'quick' ? 'Clipmo quick clipboard' : 'Clipmo';
   }, [mode]);
 
-  // The quick palette is a reused webview: it is hidden, not destroyed. Rust
-  // emits `clipmo:quick-opened` on every invocation so the palette can replay
-  // its transition and put the caret back in the search field.
+  // Native event names remain stable for in-place upgrades; all visible copy
+  // and browser-only events use the Clipmo name.
   useEffect(() => {
     if (mode !== 'quick') return;
     let fallback: number | undefined;
@@ -59,7 +58,7 @@ export default function App() {
       fallback = window.setTimeout(() => setQuickEntering(false), 180);
       window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
     };
-    const unlisten = on<void>('clipmo:quick-opened', replayOpen);
+    const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
     return () => {
       window.clearTimeout(fallback);
       void unlisten.then((fn) => fn());
@@ -72,7 +71,7 @@ export default function App() {
   }, [settings?.theme, settings?.backdrop, appearance]);
 
   useEffect(() => {
-    const unlisten = on<Backdrop>('clipmo:backdrop', (effective) => {
+    const unlisten = on<Backdrop>('clipdeck:backdrop', (effective) => {
       document.documentElement.dataset.backdrop = effective.toLowerCase();
     });
 
