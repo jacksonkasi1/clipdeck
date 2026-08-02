@@ -39,16 +39,15 @@ export default function App() {
   const deleteSelected = useStore((s) => s.deleteSelected);
   const clearHistory = useStore((s) => s.clearHistory);
   const readinessSignaled = useRef(false);
-  // The shell is visible by default. This class only restarts a bounded inner
-  // animation after Rust confirms the already-rendered quick window was shown.
   const [quickEntering, setQuickEntering] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
+    document.title = mode === 'quick' ? 'Clipmo quick clipboard' : 'Clipmo';
   }, [mode]);
 
   // The quick palette is a reused webview: it is hidden, not destroyed. Rust
-  // emits `clipdeck:quick-opened` on every invocation so the palette can replay
+  // emits `clipmo:quick-opened` on every invocation so the palette can replay
   // its transition and put the caret back in the search field.
   useEffect(() => {
     if (mode !== 'quick') return;
@@ -56,13 +55,11 @@ export default function App() {
     const replayOpen = () => {
       window.clearTimeout(fallback);
       setQuickEntering(false);
-      // A timer, rather than requestAnimationFrame, works while WebView2 is
-      // transitioning from hidden to visible. The CSS default remains visible.
       window.setTimeout(() => setQuickEntering(true), 0);
       fallback = window.setTimeout(() => setQuickEntering(false), 180);
-      window.dispatchEvent(new CustomEvent('clipdeck:focus-search'));
+      window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
     };
-    const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
+    const unlisten = on<void>('clipmo:quick-opened', replayOpen);
     return () => {
       window.clearTimeout(fallback);
       void unlisten.then((fn) => fn());
@@ -75,7 +72,7 @@ export default function App() {
   }, [settings?.theme, settings?.backdrop, appearance]);
 
   useEffect(() => {
-    const unlisten = on<Backdrop>('clipdeck:backdrop', (effective) => {
+    const unlisten = on<Backdrop>('clipmo:backdrop', (effective) => {
       document.documentElement.dataset.backdrop = effective.toLowerCase();
     });
 
@@ -147,9 +144,9 @@ export default function App() {
         event.preventDefault();
         if (!showPreview) {
           void setShowPreview(true);
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipdeck:edit-selected')), 0);
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipmo:edit-selected')), 0);
         } else {
-          window.dispatchEvent(new CustomEvent('clipdeck:edit-selected'));
+          window.dispatchEvent(new CustomEvent('clipmo:edit-selected'));
         }
       } else if (modifier && key === 'd' && selectedId) {
         event.preventDefault();
@@ -272,9 +269,7 @@ export default function App() {
     <div
       className={frameClasses}
       role="application"
-      aria-label={
-        mode === 'quick' ? 'Clipdeck quick clipboard' : 'Clipdeck clipboard history'
-      }
+      aria-label={mode === 'quick' ? 'Clipmo quick clipboard' : 'Clipmo clipboard history'}
     >
       {mode === 'quick' ? (
         <div
