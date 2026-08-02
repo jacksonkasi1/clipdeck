@@ -197,6 +197,27 @@ function Assert-ScreenshotContent([string]$Path, [string]$Name) {
     }
 }
 
+function Save-RenderedWindowScreenshot(
+    [IntPtr]$Handle,
+    [string]$Path,
+    [string]$Name,
+    [int]$TimeoutSeconds = 10
+) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = $null
+    do {
+        Save-WindowScreenshot $Handle $Path
+        try {
+            Assert-ScreenshotContent $Path $Name
+            return
+        } catch {
+            $lastError = $_
+            Start-Sleep -Milliseconds 500
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "$Name did not render meaningful content within ${TimeoutSeconds}s. Last capture failure: $($lastError.Exception.Message)"
+}
+
 function Wait-ForJson([string]$Path, [DateTime]$Deadline) {
     do {
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -282,11 +303,10 @@ try {
         throw 'The real visible Clipmo main window was not created.'
     }
 
-    Save-WindowScreenshot $process.MainWindowHandle $mainScreenshotPath
+    Save-RenderedWindowScreenshot $process.MainWindowHandle $mainScreenshotPath 'Main window'
     if (-not (Test-Path -LiteralPath $mainScreenshotPath -PathType Leaf) -or (Get-Item $mainScreenshotPath).Length -le 1024) {
         throw 'Clipmo main startup screenshot was not captured.'
     }
-    Assert-ScreenshotContent $mainScreenshotPath 'Main window'
 
     Start-Process -FilePath $target -ArgumentList '--show-quick' -Wait
     $quickDeadline = [DateTime]::UtcNow.AddSeconds(15)
@@ -329,8 +349,7 @@ try {
     }
 
     $firstQuick = [IO.Path]::ChangeExtension($quickScreenshotPath, 'first.png')
-    Save-WindowScreenshot $quickHandle $firstQuick
-    Assert-ScreenshotContent $firstQuick 'First quick open'
+    Save-RenderedWindowScreenshot $quickHandle $firstQuick 'First quick open'
 
     Start-Process -FilePath $target -ArgumentList '--hide-quick' -Wait
     $hideDeadline = [DateTime]::UtcNow.AddSeconds(5)
@@ -354,8 +373,7 @@ try {
     if ($quickHandle -eq [IntPtr]::Zero -or -not $quickFocus.searchFocused) {
         throw 'Quick window did not reopen with search focused.'
     }
-    Save-WindowScreenshot $quickHandle $quickScreenshotPath
-    Assert-ScreenshotContent $quickScreenshotPath 'Reopened quick window'
+    Save-RenderedWindowScreenshot $quickHandle $quickScreenshotPath 'Reopened quick window'
     Remove-Item -LiteralPath $firstQuick -Force -ErrorAction SilentlyContinue
 
     Write-Host "Verified installed Clipmo main and reusable quick UI (PID $($process.Id)); main=$mainScreenshotPath; quick=$quickScreenshotPath"
