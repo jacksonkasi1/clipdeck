@@ -1,11 +1,15 @@
 [package]
 name = "clipdeck"
 version = "0.2.1"
-description = "Blazing fast clipboard history for Windows"
-authors = ["Clipdeck"]
+description = "Clipmo clipboard history for Windows"
+authors = ["Clipmo"]
 edition = "2021"
 rust-version = "1.85"
-default-run = "clipdeck"
+default-run = "clipmo"
+
+[[bin]]
+name = "clipmo"
+path = "src/main.rs"
 
 [lib]
 name = "clipdeck_lib"
