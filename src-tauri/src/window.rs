@@ -202,11 +202,11 @@ fn report_quick_styles(
     enforced: Result<crate::win::window_style::StyleSnapshot, String>,
 ) {
     let shown = crate::win::window_style::read_styles(window);
-    let describe = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot
-    {
-        Ok(value) => value.to_string(),
-        Err(error) => format!("unavailable: {error}"),
-    };
+    let describe =
+        |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot {
+            Ok(value) => value.to_string(),
+            Err(error) => format!("unavailable: {error}"),
+        };
     log::info!(
         "quick window styles: before [{}], enforced [{}], shown [{}]",
         describe(&before),
@@ -217,7 +217,8 @@ fn report_quick_styles(
     let Ok(base_path) = std::env::var("CLIPDECK_READY_FILE") else {
         return;
     };
-    let field = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot {
+    let field = |snapshot: &Result<crate::win::window_style::StyleSnapshot, String>| match snapshot
+    {
         Ok(value) => serde_json::json!({
             "hwnd": format!("0x{:X}", value.hwnd),
             "style": format!("0x{:08X}", value.style as u32),
