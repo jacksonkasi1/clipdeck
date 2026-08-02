@@ -11,10 +11,7 @@ export function resolveTheme(mode: ThemeMode, systemDark?: boolean): ResolvedThe
   return (systemDark ?? prefersDarkTheme()) ? 'dark' : 'light';
 }
 
-/**
- * Applies the same resolved theme and Windows accent to every Clipdeck webview.
- * Keeping this at the document boundary prevents main/settings window drift.
- */
+/** Applies the same resolved theme and Windows accent to every Clipmo webview. */
 export function applyTheme(
   mode: ThemeMode,
   appearance: SystemAppearance | null,
