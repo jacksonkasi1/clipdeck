@@ -19,72 +19,35 @@ jobs:
           ref: feat/clipmo-cross-device-sync-complete
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.97.0
-          components: rustfmt
-
-      - name: Apply Clippy fixes
+      - name: Apply strict Clippy fixes
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path('src-tauri/src/sync.rs')
           text = path.read_text()
-          replacements = {
-          '''                    if before.content_hash != row.content_hash || before.content != row.content {
-                        if !consume_edit_suppression(&service, id_hash, &row.content_hash) {
-                            service.enqueue_edit(row);
-                        }
-                    }
-''': '''                    if (before.content_hash != row.content_hash || before.content != row.content)
-                        && !consume_edit_suppression(&service, id_hash, &row.content_hash)
-                    {
-                        service.enqueue_edit(row);
-                    }
-''',
-          '''                    if before.favorite != row.favorite {
-                        if !consume_favorite_suppression(&service, id_hash, row.favorite) {
-                            service.enqueue_favorite(row);
-                        }
-                    }
-''': '''                    if before.favorite != row.favorite
-                        && !consume_favorite_suppression(&service, id_hash, row.favorite)
-                    {
-                        service.enqueue_favorite(row);
-                    }
-''',
-          '''                    if before.assets_fingerprint != row.assets_fingerprint
-                        && row.kind == ItemKind::Files
-                    {
-                        if !consume_asset_suppression(&service, id_hash) {
-                            if let Some(db) = &service.db {
-                                if let Ok(Some(item)) = db.get(row.item_id) {
-                                    service.enqueue_item(&item);
-                                }
-                            }
-                        }
-                    }
-''': '''                    if before.assets_fingerprint != row.assets_fingerprint
-                        && row.kind == ItemKind::Files
-                        && !consume_asset_suppression(&service, id_hash)
-                    {
-                        if let Some(db) = &service.db {
-                            if let Ok(Some(item)) = db.get(row.item_id) {
-                                service.enqueue_item(&item);
-                            }
-                        }
-                    }
-''',
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit('expected sync.rs Clippy block not found')
-              text = text.replace(old, new, 1)
+
+          text, edits = re.subn(
+              r'''                    if before\.content_hash != row\.content_hash \|\| before\.content != row\.content \{\n                        if !consume_edit_suppression\(&service, id_hash, &row\.content_hash\) \{\n                            service\.enqueue_edit\(row\);\n                        \}\n                    \}\n''',
+              '''                    if (before.content_hash != row.content_hash || before.content != row.content)\n                        && !consume_edit_suppression(&service, id_hash, &row.content_hash)\n                    {\n                        service.enqueue_edit(row);\n                    }\n''',
+              text,
+          )
+          text, favorites = re.subn(
+              r'''                    if before\.favorite != row\.favorite \{\n                        if !consume_favorite_suppression\(&service, id_hash, row\.favorite\) \{\n                            service\.enqueue_favorite\(row\);\n                        \}\n                    \}\n''',
+              '''                    if before.favorite != row.favorite\n                        && !consume_favorite_suppression(&service, id_hash, row.favorite)\n                    {\n                        service.enqueue_favorite(row);\n                    }\n''',
+              text,
+          )
+          text, assets = re.subn(
+              r'''                    if before\.assets_fingerprint != row\.assets_fingerprint\n                        && row\.kind == ItemKind::Files\n                    \{\n                        if !consume_asset_suppression\(&service, id_hash\) \{\n                            if let Some\(db\) = &service\.db \{\n                                if let Ok\(Some\(item\)\) = db\.get\(row\.item_id\) \{\n                                    service\.enqueue_item\(&item\);\n                                \}\n                            \}\n                        \}\n                    \}\n''',
+              '''                    if before.assets_fingerprint != row.assets_fingerprint\n                        && row.kind == ItemKind::Files\n                        && !consume_asset_suppression(&service, id_hash)\n                    {\n                        if let Some(db) = &service.db {\n                            if let Ok(Some(item)) = db.get(row.item_id) {\n                                service.enqueue_item(&item);\n                            }\n                        }\n                    }\n''',
+              text,
+          )
+          if (edits, favorites, assets) != (1, 1, 1):
+              raise SystemExit(f'unexpected replacement counts: {(edits, favorites, assets)}')
           path.write_text(text)
           PY
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all
 
       - name: Commit fix
         shell: bash
