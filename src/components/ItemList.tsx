@@ -33,11 +33,15 @@ export function ItemList() {
   const loadingMore = useStore((s) => s.loadingMore);
   const hasMore = useStore((s) => s.hasMore);
   const loadMore = useStore((s) => s.loadMore);
+  const refresh = useStore((s) => s.refresh);
   const parentRef = useRef<HTMLDivElement>(null);
+  const startupRecoveryStarted = useRef(false);
   // Tracks whether the list owns keyboard focus so the active row can show a
   // slightly stronger neutral fill. This replaces the old accent focus ring,
   // which drew a blue rectangle around the entire scrolling container.
   const [listFocused, setListFocused] = useState(false);
+  const [startupRetrying, setStartupRetrying] = useState(false);
+  const [startupRecovered, setStartupRecovered] = useState(false);
 
   const rowHeight = ROW_HEIGHT[mode];
 
@@ -71,7 +75,51 @@ export function ItemList() {
     return () => scrollElement.removeEventListener('scroll', loadNearEnd);
   }, [hasMore, items.length, loadMore, loadingMore]);
 
+  useEffect(() => {
+    if (
+      mode !== 'quick'
+      || !bootError
+      || items.length > 0
+      || startupRecoveryStarted.current
+    ) {
+      return;
+    }
+
+    startupRecoveryStarted.current = true;
+    let cancelled = false;
+
+    const recover = async () => {
+      setStartupRetrying(true);
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          await refresh();
+          if (!cancelled) {
+            setStartupRecovered(true);
+            setStartupRetrying(false);
+          }
+          return;
+        } catch (error) {
+          if (attempt === 4) {
+            console.error('Quick clipboard startup recovery failed', error);
+            break;
+          }
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, 120 * (2 ** attempt));
+          });
+        }
+      }
+      if (!cancelled) setStartupRetrying(false);
+    };
+
+    void recover();
+    return () => {
+      cancelled = true;
+    };
+  }, [bootError, items.length, mode, refresh]);
+
   const selectedSet = new Set(selectedIds);
+  const showStartupLoading = items.length === 0 && (loading || startupRetrying);
+  const showStartupError = items.length === 0 && Boolean(bootError) && !startupRecovered;
 
   return (
     <div
@@ -82,7 +130,7 @@ export function ItemList() {
       tabIndex={0}
       aria-label="Clipboard entries"
       aria-multiselectable="true"
-      aria-busy={loading || loadingMore}
+      aria-busy={loading || loadingMore || startupRetrying}
       aria-activedescendant={selectedId !== null ? `clip-item-${selectedId}` : undefined}
       onFocus={() => setListFocused(true)}
       onBlur={(event) => {
@@ -99,13 +147,13 @@ export function ItemList() {
         }
       }}
     >
-      {items.length === 0 && loading ? (
+      {showStartupLoading ? (
         <div className="empty-state is-loading" role="status">
           <span className="empty-state-icon"><LoaderCircle className="is-spinning" size={24} aria-hidden /></span>
           <strong>Loading clipboard history…</strong>
           <span>Search is ready while Clipmo connects to your history.</span>
         </div>
-      ) : items.length === 0 && bootError ? (
+      ) : showStartupError ? (
         <div className="empty-state" role="status">
           <span className="empty-state-icon"><AlertCircle size={24} aria-hidden /></span>
           <strong>Clipboard history could not be loaded</strong>
