@@ -90,9 +90,9 @@ export function CommandPalette() {
       case 'edit':
         if (!showPreview) {
           void setShowPreview(true);
-          window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipdeck:edit-selected')), 0);
+          window.setTimeout(() => window.dispatchEvent(new CustomEvent('clipmo:edit-selected')), 0);
         } else {
-          window.dispatchEvent(new CustomEvent('clipdeck:edit-selected'));
+          window.dispatchEvent(new CustomEvent('clipmo:edit-selected'));
         }
         break;
       case 'favorite':
@@ -102,7 +102,7 @@ export function CommandPalette() {
         if (selectedId) await deleteItem(selectedId);
         break;
       case 'search':
-        window.dispatchEvent(new CustomEvent('clipdeck:focus-search'));
+        window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
         break;
       case 'settings':
         await api.openSettingsWindow();
