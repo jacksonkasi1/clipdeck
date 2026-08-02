@@ -2,7 +2,7 @@
   "name": "clipdeck",
   "version": "0.2.1",
   "private": true,
-  "description": "Clipdeck — a blazing fast clipboard history manager for Windows",
+  "description": "Clipmo — a fast, private clipboard history manager for Windows",
   "type": "module",
   "scripts": {
     "dev": "vite",
