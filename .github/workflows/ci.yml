@@ -135,12 +135,13 @@ jobs:
           -Screenshot "artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}"
 
       - name: Upload the tested installer and startup screenshots
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: clipmo-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
+          name: clipmo-windows-x64-${{ github.sha }}
           path: |
-            artifacts/windows-x64/${{ steps.collect.outputs.installer }}
-            artifacts/windows-x64/${{ steps.collect.outputs.main_screenshot }}
-            artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}
-          if-no-files-found: error
+            artifacts/windows-x64/Clipmo_*_x64-setup.exe
+            artifacts/windows-x64/Clipmo_*_main-startup.png
+            artifacts/windows-x64/Clipmo_*_quick-startup.png
+          if-no-files-found: warn
           retention-days: 14

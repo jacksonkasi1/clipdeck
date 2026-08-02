@@ -189,7 +189,9 @@ function Assert-ScreenshotContent([string]$Path, [string]$Name) {
         }
         $sampleCount = ($all.Values | Measure-Object -Sum).Sum
         $largest = ($all.Values | Measure-Object -Maximum).Maximum
-        if ($all.Count -lt 12 -or $header.Count -lt 6 -or ($largest / $sampleCount) -gt 0.98) {
+        $largestRatio = $largest / $sampleCount
+        Write-Host "$Name screenshot diagnostics: size=$($bitmap.Width)x$($bitmap.Height), colors=$($all.Count), headerColors=$($header.Count), dominant=$('{0:P1}' -f $largestRatio), bytes=$((Get-Item -LiteralPath $Path).Length)."
+        if ($all.Count -lt 12 -or $header.Count -lt 6 -or $largestRatio -gt 0.98) {
             throw "$Name screenshot is nearly uniform or its search/header region has no meaningful visual variation."
         }
     } finally {
@@ -348,7 +350,9 @@ try {
         throw ('Quick window unexpectedly has an application taskbar style (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
     }
 
-    $firstQuick = [IO.Path]::ChangeExtension($quickScreenshotPath, 'first.png')
+    # Use the final artifact path for the first capture too, so a failed smoke
+    # test still uploads the actual pixels that caused the rendering assertion.
+    $firstQuick = $quickScreenshotPath
     Save-RenderedWindowScreenshot $quickHandle $firstQuick 'First quick open'
 
     Start-Process -FilePath $target -ArgumentList '--hide-quick' -Wait
@@ -374,7 +378,6 @@ try {
         throw 'Quick window did not reopen with search focused.'
     }
     Save-RenderedWindowScreenshot $quickHandle $quickScreenshotPath 'Reopened quick window'
-    Remove-Item -LiteralPath $firstQuick -Force -ErrorAction SilentlyContinue
 
     Write-Host "Verified installed Clipmo main and reusable quick UI (PID $($process.Id)); main=$mainScreenshotPath; quick=$quickScreenshotPath"
 } finally {
