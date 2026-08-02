@@ -2,7 +2,7 @@
 param(
     [ValidateSet('gnu', 'msvc')]
     [string]$Toolchain = 'gnu',
-    [string]$BuildRoot = 'D:\Program\rust-target\clipdeck'
+    [string]$BuildRoot = 'D:\Program\rust-target\clipmo'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,8 +37,8 @@ $metadata = cargo metadata --format-version 1 --no-deps --manifest-path (Join-Pa
 if ($LASTEXITCODE -ne 0) { throw 'Could not discover Cargo target directory.' }
 $releaseRoot = Join-Path ([string]$metadata.target_directory) "$target\release"
 $tauriConfig = Get-Content -Raw (Join-Path $projectRoot 'src-tauri\tauri.conf.json') | ConvertFrom-Json
-$installerName = "Clipdeck_$($tauriConfig.version)_x64-setup.exe"
+$installerName = "Clipmo_$($tauriConfig.version)_x64-setup.exe"
 $installerPath = Join-Path $releaseRoot "bundle\nsis\$installerName"
-Write-Host "Application executable: $(Join-Path $releaseRoot 'clipdeck.exe')"
+Write-Host "Application executable: $(Join-Path $releaseRoot 'clipmo.exe')"
 Write-Host "Installer: $installerPath"
 Write-Host "Run scripts/collect-windows-artifacts.ps1 -TargetTriple $target to install, launch, and verify the NSIS artifact."
