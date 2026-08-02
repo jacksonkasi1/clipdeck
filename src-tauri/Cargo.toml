@@ -2,7 +2,7 @@
 name = "clipdeck"
 version = "0.2.1"
 description = "Clipmo clipboard history for Windows"
-authors = ["Clipmo"]
+authors = ["Jackson Kasi"]
 edition = "2021"
 rust-version = "1.85"
 default-run = "clipdeck"
