@@ -21,7 +21,7 @@ use windows::Win32::Graphics::Dwm::{
 
 #[cfg(windows)]
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
-/// Suppresses the visible DWM border while keeping compositor clipping/shadow.
+/// Suppresses the visible DWM border while keeping compositor clipping.
 #[cfg(windows)]
 const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
 
@@ -67,27 +67,51 @@ pub fn apply_frame(window: &WebviewWindow, dark: bool) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
-    let quick = mode_for_label(window.label()) == WindowMode::Quick;
-    let corner = if quick {
-        DWMWCP_ROUNDSMALL.0 as u32
-    } else {
-        DWMWCP_ROUND.0 as u32
-    };
-    let border = if quick {
-        DWMWA_COLOR_NONE
-    } else {
-        DWMWA_COLOR_DEFAULT
-    };
-
     unsafe {
         set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &(dark as u32));
-        set_attribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner);
-        set_attribute(hwnd, DWMWA_BORDER_COLOR, &border);
+    }
+
+    if mode_for_label(window.label()) == WindowMode::Quick {
+        apply_quick_frame(window);
+        return;
+    }
+
+    unsafe {
+        set_attribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &(DWMWCP_ROUND.0 as u32),
+        );
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_DEFAULT);
+    }
+}
+
+/// Reasserts the quick flyout's compositor policy after any Win32 frame change.
+///
+/// Tauri applies a one-pixel white frame whenever shadow is enabled on an
+/// undecorated Windows window. The quick palette disables that shadow and calls
+/// this again after each `SWP_FRAMECHANGED`, so WebView2 or Acrylic setup cannot
+/// restore the white non-client edge before the window is revealed.
+#[cfg(windows)]
+pub fn apply_quick_frame(window: &WebviewWindow) {
+    let Ok(hwnd) = window.hwnd() else {
+        return;
+    };
+    unsafe {
+        set_attribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &(DWMWCP_ROUNDSMALL.0 as u32),
+        );
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_NONE);
     }
 }
 
 #[cfg(not(windows))]
 pub fn apply_frame(_window: &WebviewWindow, _dark: bool) {}
+
+#[cfg(not(windows))]
+pub fn apply_quick_frame(_window: &WebviewWindow) {}
 
 /// Sets a single DWM attribute, ignoring unsupported-attribute failures.
 #[cfg(windows)]
