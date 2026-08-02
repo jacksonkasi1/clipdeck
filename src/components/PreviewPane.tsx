@@ -45,8 +45,8 @@ export function PreviewPane() {
     const beginEditing = () => {
       if (item && !['image', 'files'].includes(item.kind)) setEditing(true);
     };
-    window.addEventListener('clipdeck:edit-selected', beginEditing);
-    return () => window.removeEventListener('clipdeck:edit-selected', beginEditing);
+    window.addEventListener('clipmo:edit-selected', beginEditing);
+    return () => window.removeEventListener('clipmo:edit-selected', beginEditing);
   }, [item?.id]);
 
   return (
@@ -256,7 +256,7 @@ function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
         onClick={() => {
           const scheme = tryParseScheme(url);
           if (!scheme) {
-            toast('That link is not a URL Clipdeck can open.', 'error');
+            toast('That link is not a URL Clipmo can open.', 'error');
             return;
           }
           void api.openExternalUrl(normaliseUrl(url)).catch((error: unknown) => {
@@ -347,8 +347,6 @@ function EditItem({
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-            // Ctrl+S / Cmd+S saves the edit. preventDefault stops the webview
-            // from triggering its own "save page as" shortcut.
             event.preventDefault();
             event.currentTarget.form?.requestSubmit();
           }
@@ -373,7 +371,7 @@ function SnapshotStatusIcon({ status }: { status: 'pending' | 'ready' | 'skipped
 
 function snapshotLabel(status: 'pending' | 'ready' | 'skipped' | 'failed', message: string | null) {
   if (status === 'pending') return 'Saving a managed snapshot…';
-  if (status === 'ready') return 'Saved in Clipdeck storage';
+  if (status === 'ready') return 'Saved in Clipmo storage';
   return message ?? (status === 'failed' ? 'Snapshot failed' : 'Snapshot skipped');
 }
 
