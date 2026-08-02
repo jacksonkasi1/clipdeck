@@ -52,7 +52,7 @@
         "closable": false,
         "decorations": false,
         "transparent": true,
-        "shadow": true,
+        "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visibleOnAllWorkspaces": false,
@@ -79,6 +79,7 @@
     "targets": [
       "nsis"
     ],
+    "publisher": "Jackson Kasi",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -87,7 +88,7 @@
     ],
     "shortDescription": "Fast, private clipboard history for Windows",
     "longDescription": "Clipmo keeps everything you copy — text, links, colors, images and files — and puts it one keystroke away. Native Windows 11 look, instant search, zero telemetry.",
-    "copyright": "Copyright © 2026 Clipmo",
+    "copyright": "Copyright © 2026 Jackson Kasi",
     "category": "Productivity",
     "windows": {
       "webviewInstallMode": {
