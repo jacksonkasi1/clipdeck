@@ -32,4 +32,4 @@ This branch completes the desktop same-network sync work planned for the Clipmo 
 - ⬜ Replace the LAN PIN trust boundary with certificate-pinned mTLS.
 - ⬜ Manual QA with two physical devices across Windows/macOS/Linux builds as those packages become available.
 
-GitHub Actions must keep frontend tests/build, Rust formatting, Clippy with warnings denied, Rust tests, NSIS packaging, installed-app smoke tests, and artifact screenshots green before merge.
+Verification runs from this branch so the exact reviewed commit produces the installer and screenshots. GitHub Actions must keep frontend tests/build, Rust formatting, Clippy with warnings denied, Rust tests, NSIS packaging, installed-app smoke tests, and artifact screenshots green before merge.
