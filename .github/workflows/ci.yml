@@ -58,8 +58,6 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --no-audit
 
-      # Tauri runs npm run build once via build.beforeBuildCommand. Keeping the
-      # command in tauri.conf.json preserves local `tauri build` behavior.
       - name: Test frontend
         run: npm test
 
@@ -104,7 +102,7 @@ jobs:
       - name: Upload the tested installer and startup screenshots
         uses: actions/upload-artifact@v7
         with:
-          name: clipdeck-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
+          name: clipmo-windows-x64-${{ steps.collect.outputs.version }}-${{ github.sha }}
           path: |
             artifacts/windows-x64/${{ steps.collect.outputs.installer }}
             artifacts/windows-x64/${{ steps.collect.outputs.main_screenshot }}
