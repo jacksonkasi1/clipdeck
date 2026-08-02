@@ -3,34 +3,31 @@
 //! Two layers cooperate to produce the Windows 11 flyout look:
 //!
 //! 1. `window-vibrancy` installs the system backdrop (Desktop Acrylic or Mica).
-//!    Acrylic is what the shell itself uses for transient surfaces such as the
-//!    Win+V flyout, so it is our default.
-//! 2. DWM attributes round the frame and switch the non-client area to dark mode.
+//! 2. DWM attributes own corner clipping, native border color, and dark mode.
 //!
 //! Every call degrades gracefully: on a build that predates an attribute, DWM
-//! returns `E_INVALIDARG` and we simply keep the previous appearance rather than
-//! failing to show the window.
+//! returns `E_INVALIDARG` and we keep the previous appearance.
 
 use tauri::WebviewWindow;
 
 use crate::models::Backdrop;
+use crate::window_layout::{mode_for_label, WindowMode};
 
 #[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DWMWCP_ROUNDSMALL,
 };
 
-/// `DWMWA_COLOR_DEFAULT` lets DWM own the top-level edge along with its corner
-/// clipping and shadow. CSS may draw only an inset hairline inside that clip.
 #[cfg(windows)]
 const DWMWA_COLOR_DEFAULT: u32 = 0xFFFF_FFFF;
+/// Suppresses the visible DWM border while keeping compositor clipping/shadow.
+#[cfg(windows)]
+const DWMWA_COLOR_NONE: u32 = 0xFFFF_FFFE;
 
 /// Applies the configured backdrop to a window.
 ///
 /// Falls back through Acrylic → Mica → opaque so the window is always usable.
-/// Returns the material that actually took effect, which the frontend uses to
-/// decide how opaque its own surfaces need to be.
 pub fn apply(window: &WebviewWindow, backdrop: Backdrop, dark: bool) -> Backdrop {
     let _ = window_vibrancy::clear_acrylic(window);
     let _ = window_vibrancy::clear_mica(window);
@@ -64,28 +61,35 @@ pub fn apply(window: &WebviewWindow, backdrop: Backdrop, dark: bool) -> Backdrop
     effective
 }
 
-/// Rounds the window corners and matches the frame to the current theme.
+/// Applies label-specific Windows 11 corner and border policy.
 #[cfg(windows)]
 pub fn apply_frame(window: &WebviewWindow, dark: bool) {
     let Ok(hwnd) = window.hwnd() else {
         return;
     };
+    let quick = mode_for_label(window.label()) == WindowMode::Quick;
+    let corner = if quick {
+        DWMWCP_ROUNDSMALL.0 as u32
+    } else {
+        DWMWCP_ROUND.0 as u32
+    };
+    let border = if quick {
+        DWMWA_COLOR_NONE
+    } else {
+        DWMWA_COLOR_DEFAULT
+    };
 
     unsafe {
         set_attribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &(dark as u32));
-        set_attribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            &(DWMWCP_ROUND.0 as u32),
-        );
-        set_attribute(hwnd, DWMWA_BORDER_COLOR, &DWMWA_COLOR_DEFAULT);
+        set_attribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner);
+        set_attribute(hwnd, DWMWA_BORDER_COLOR, &border);
     }
 }
 
 #[cfg(not(windows))]
 pub fn apply_frame(_window: &WebviewWindow, _dark: bool) {}
 
-/// Sets a single DWM attribute, ignoring `E_INVALIDARG` from older builds.
+/// Sets a single DWM attribute, ignoring unsupported-attribute failures.
 #[cfg(windows)]
 unsafe fn set_attribute(
     hwnd: windows::Win32::Foundation::HWND,
