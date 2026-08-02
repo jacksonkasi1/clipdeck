@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 
 import { DeviceBadge } from './components/DeviceBadge';
+import { SyncPreferencesPanel } from './components/SyncPreferencesPanel';
 import { useStore } from './lib/store';
 import { api, fileSrc } from './lib/tauri';
 import { getPlatform } from './lib/platform';
@@ -401,6 +402,7 @@ export default function Settings() {
               <RefreshCw size={15} aria-hidden />
             </button>
           </Row>
+          <SyncPreferencesPanel />
           <div className="peer-list" aria-label="Discovered sync devices">
             {(sync?.peers.length ?? 0) === 0 ? (
               <span className="peer-empty">No paired devices discovered yet</span>

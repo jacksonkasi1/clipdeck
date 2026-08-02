@@ -103,13 +103,13 @@ export function ItemList() {
         <div className="empty-state is-loading" role="status">
           <span className="empty-state-icon"><LoaderCircle className="is-spinning" size={24} aria-hidden /></span>
           <strong>Loading clipboard history…</strong>
-          <span>Search is ready while Clipdeck connects to your history.</span>
+          <span>Search is ready while Clipmo connects to your history.</span>
         </div>
       ) : items.length === 0 && bootError ? (
         <div className="empty-state" role="status">
           <span className="empty-state-icon"><AlertCircle size={24} aria-hidden /></span>
           <strong>Clipboard history could not be loaded</strong>
-          <span>Clipdeck is still usable. Press F5 to try again.</span>
+          <span>Clipmo is still usable. Press F5 to try again.</span>
         </div>
       ) : items.length === 0 ? (
         <EmptyState search={search} />

@@ -7,6 +7,7 @@ import { bootStore } from './lib/store';
 
 // ** import styles
 import './styles/global.css';
+import './styles/sync-preferences.css';
 
 void bootStore();
 

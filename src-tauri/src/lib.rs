@@ -124,6 +124,8 @@ pub fn run() {
             commands::set_always_on_top,
             commands::set_preview_visible,
             commands::sync_state,
+            sync::load_sync_preferences,
+            sync::save_sync_preferences,
             commands::regenerate_pairing_code,
             commands::quit_app,
             native_appearance::sync_native_appearance,

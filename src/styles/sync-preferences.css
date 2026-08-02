@@ -1,0 +1,185 @@
+.sync-preferences {
+  display: grid;
+  gap: 12px;
+  margin: 4px 0 14px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-raised) 78%, transparent);
+}
+
+.sync-preferences.is-loading {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+}
+
+.sync-preferences-tabs {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+}
+
+.sync-preferences-tabs button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sync-preferences-tabs button.is-active {
+  color: var(--text-primary);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.sync-preferences-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.sync-content-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 9px;
+  align-items: start;
+  min-height: 92px;
+  padding: 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  cursor: pointer;
+}
+
+.sync-content-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.sync-content-toggle strong,
+.sync-content-toggle small {
+  display: block;
+}
+
+.sync-content-toggle strong {
+  margin-bottom: 4px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.sync-content-toggle small,
+.sync-field small {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sync-content-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
+.sync-file-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sync-field {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sync-field.is-wide {
+  grid-column: 1 / -1;
+}
+
+.sync-field select,
+.sync-field textarea,
+.sync-number {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--control-bg);
+  font: inherit;
+}
+
+.sync-field select {
+  height: 34px;
+  padding: 0 9px;
+}
+
+.sync-field textarea {
+  min-height: 68px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+
+.sync-number {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  overflow: hidden;
+}
+
+.sync-number input {
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+}
+
+.sync-number em {
+  padding-right: 9px;
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+
+.sync-preferences-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 32px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.sync-preferences-footer span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sync-preferences-footer .is-error {
+  color: var(--danger);
+}
+
+@media (max-width: 760px) {
+  .sync-preferences-grid,
+  .sync-file-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .sync-field.is-wide {
+    grid-column: auto;
+  }
+}
