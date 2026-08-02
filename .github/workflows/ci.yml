@@ -84,12 +84,38 @@ jobs:
           --
           --test-threads=1
 
+      - name: Prepare Windows code signing
+        id: signing
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
+        run: ./scripts/prepare-windows-signing.ps1
+
       - name: Build NSIS installer
+        shell: pwsh
+        env:
+          SIGNING_CONFIG: ${{ steps.signing.outputs.config }}
+        run: |
+          $arguments = @(
+            'tauri', 'build',
+            '--ci',
+            '--target', '${{ env.WINDOWS_TARGET }}',
+            '--bundles', 'nsis'
+          )
+          if (-not [string]::IsNullOrWhiteSpace($env:SIGNING_CONFIG)) {
+            $arguments += @('--config', $env:SIGNING_CONFIG)
+          }
+          & npx @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify Authenticode signatures
+        shell: pwsh
         run: >-
-          npx tauri build
-          --ci
-          --target ${{ env.WINDOWS_TARGET }}
-          --bundles nsis
+          ./scripts/verify-windows-signing.ps1
+          -TargetTriple "${{ env.WINDOWS_TARGET }}"
+          -ExpectedSigned "${{ steps.signing.outputs.enabled }}"
 
       - name: Build, extract, and smoke-test exact release assets
         id: collect
@@ -98,6 +124,12 @@ jobs:
           ./scripts/collect-windows-artifacts.ps1
           -TargetTriple "${{ env.WINDOWS_TARGET }}"
           -OutputDirectory "artifacts/windows-x64"
+
+      - name: Reject the quick-window white frame
+        shell: pwsh
+        run: >-
+          ./scripts/assert-quick-window-frame.ps1
+          -Screenshot "artifacts/windows-x64/${{ steps.collect.outputs.quick_screenshot }}"
 
       - name: Upload the tested installer and startup screenshots
         uses: actions/upload-artifact@v7
