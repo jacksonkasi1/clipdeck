@@ -125,7 +125,7 @@ namespace ClipdeckSmoke {
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hwnd, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hwnd, int index);
+    [DllImport("user32.dll")] public static extern uint GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
   }
 }
