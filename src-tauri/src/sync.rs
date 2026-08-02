@@ -1312,24 +1312,23 @@ fn spawn_watcher(service: SyncService) -> io::Result<()> {
                     let Some(before) = previous.get(id_hash) else {
                         continue;
                     };
-                    if before.content_hash != row.content_hash || before.content != row.content {
-                        if !consume_edit_suppression(&service, id_hash, &row.content_hash) {
-                            service.enqueue_edit(row);
-                        }
+                    if (before.content_hash != row.content_hash || before.content != row.content)
+                        && !consume_edit_suppression(&service, id_hash, &row.content_hash)
+                    {
+                        service.enqueue_edit(row);
                     }
-                    if before.favorite != row.favorite {
-                        if !consume_favorite_suppression(&service, id_hash, row.favorite) {
-                            service.enqueue_favorite(row);
-                        }
+                    if before.favorite != row.favorite
+                        && !consume_favorite_suppression(&service, id_hash, row.favorite)
+                    {
+                        service.enqueue_favorite(row);
                     }
                     if before.assets_fingerprint != row.assets_fingerprint
                         && row.kind == ItemKind::Files
+                        && !consume_asset_suppression(&service, id_hash)
                     {
-                        if !consume_asset_suppression(&service, id_hash) {
-                            if let Some(db) = &service.db {
-                                if let Ok(Some(item)) = db.get(row.item_id) {
-                                    service.enqueue_item(&item);
-                                }
+                        if let Some(db) = &service.db {
+                            if let Ok(Some(item)) = db.get(row.item_id) {
+                                service.enqueue_item(&item);
                             }
                         }
                     }
