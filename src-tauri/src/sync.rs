@@ -21,8 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::db::Db;
 use crate::error::{Error, Result};
 use crate::models::{
-    now_ms, ClipItem, DeviceIdentity, ImageMeta, ItemKind, NewItem, Settings,
-    StoredFile, StoredFileStatus, SyncPeer, SyncState, SyncStatus,
+    now_ms, ClipItem, DeviceIdentity, ImageMeta, ItemKind, NewItem, Settings, StoredFile,
+    StoredFileStatus, SyncPeer, SyncState, SyncStatus,
 };
 
 const PROTOCOL: &str = "clipmo-lan-v2";
@@ -108,10 +108,9 @@ impl SyncPreferences {
 
 fn default_blocklist() -> Vec<String> {
     [
-        ".exe", ".bat", ".cmd", ".msi", ".scr", ".com", ".cpl", ".dll", ".sys",
-        ".inf", ".vbs", ".js", ".jse", ".wsf", ".ps1", ".reg", ".mp4", ".mov",
-        ".avi", ".mkv", ".webm", ".flv", ".wmv", ".iso", ".vhd", ".vhdx",
-        ".img", ".dmg", ".zip", ".rar", ".7z", ".tar", ".gz",
+        ".exe", ".bat", ".cmd", ".msi", ".scr", ".com", ".cpl", ".dll", ".sys", ".inf", ".vbs",
+        ".js", ".jse", ".wsf", ".ps1", ".reg", ".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv",
+        ".wmv", ".iso", ".vhd", ".vhdx", ".img", ".dmg", ".zip", ".rar", ".7z", ".tar", ".gz",
     ]
     .into_iter()
     .map(str::to_string)
@@ -165,11 +164,7 @@ impl SyncService {
         }
     }
 
-    pub fn start(
-        app: AppHandle,
-        db: Arc<Db>,
-        settings: Arc<RwLock<Settings>>,
-    ) -> io::Result<Self> {
+    pub fn start(app: AppHandle, db: Arc<Db>, settings: Arc<RwLock<Settings>>) -> io::Result<Self> {
         let data_dir = app
             .path()
             .app_data_dir()
@@ -301,7 +296,9 @@ impl SyncService {
                         return;
                     }
                 }
-                log::warn!("file sync waited for a local snapshot but no ready file became available");
+                log::warn!(
+                    "file sync waited for a local snapshot but no ready file became available"
+                );
             });
     }
 
@@ -819,7 +816,12 @@ fn spawn_tcp_server(listener: TcpListener, service: SyncService, app: AppHandle)
     Ok(())
 }
 
-fn handle_incoming(mut stream: TcpStream, source: SocketAddr, service: SyncService, app: AppHandle) {
+fn handle_incoming(
+    mut stream: TcpStream,
+    source: SocketAddr,
+    service: SyncService,
+    app: AppHandle,
+) {
     let _ = stream.set_read_timeout(Some(IO_TIMEOUT));
     let _ = stream.set_write_timeout(Some(IO_TIMEOUT));
     let envelope = match read_envelope(&mut stream) {
@@ -907,7 +909,9 @@ fn apply_incoming(
             }
             let total = image.image_size.saturating_add(image.thumb_size);
             if total == 0 || total > MAX_IMAGE_BYTES {
-                return Err(Error::Other("synced image exceeded the 512 KiB limit".into()));
+                return Err(Error::Other(
+                    "synced image exceeded the 512 KiB limit".into(),
+                ));
             }
             let image_bytes = read_blob(stream, image.image_size, MAX_IMAGE_BYTES)?;
             let thumb_bytes = read_blob(stream, image.thumb_size, MAX_IMAGE_BYTES)?;
@@ -936,7 +940,9 @@ fn apply_incoming(
             if declared_total > preferences.max_total_bytes()
                 || declared_total > HARD_MAX_MESSAGE_BYTES
             {
-                return Err(Error::Other("synced file batch exceeded the receiver limit".into()));
+                return Err(Error::Other(
+                    "synced file batch exceeded the receiver limit".into(),
+                ));
             }
             let mut accepted = Vec::new();
             for file in files {
@@ -951,15 +957,7 @@ fn apply_incoming(
                 }
             }
             if !accepted.is_empty() {
-                import_files(
-                    db,
-                    store,
-                    service,
-                    app,
-                    &envelope.device,
-                    clip,
-                    accepted,
-                )?;
+                import_files(db, store, service, app, &envelope.device, clip, accepted)?;
             }
         }
         SyncBody::ClipEdit {
@@ -1032,12 +1030,7 @@ fn import_text(
     let item_id = if let Some(record) = store.find_by_hash(&clip.id_hash)? {
         let current = db.get_required(record.item_id)?;
         if current.content != clip.content || current.kind != clip.kind {
-            db.update_text_content(
-                record.item_id,
-                &clip.content,
-                clip.kind,
-                &clip.content_hash,
-            )?;
+            db.update_text_content(record.item_id, &clip.content, clip.kind, &clip.content_hash)?;
         }
         record.item_id
     } else {
@@ -1206,7 +1199,9 @@ fn cleanup_asset_paths(storage_root: &Path, paths: Vec<String>) {
 
 fn read_blob(stream: &mut TcpStream, size: u64, limit: u64) -> Result<Vec<u8>> {
     if size > limit || size > usize::MAX as u64 {
-        return Err(Error::Other("synced binary payload exceeded its limit".into()));
+        return Err(Error::Other(
+            "synced binary payload exceeded its limit".into(),
+        ));
     }
     let mut bytes = vec![0u8; size as usize];
     stream.read_exact(&mut bytes)?;
@@ -1241,7 +1236,11 @@ fn spawn_sender(service: SyncService) -> io::Result<()> {
     Ok(())
 }
 
-fn send_frame(address: SocketAddr, envelope: &SyncEnvelope, blobs: &[BlobSource]) -> io::Result<()> {
+fn send_frame(
+    address: SocketAddr,
+    envelope: &SyncEnvelope,
+    blobs: &[BlobSource],
+) -> io::Result<()> {
     let expected = envelope.body.expected_blob_sizes();
     if expected.len() != blobs.len()
         || expected
@@ -1397,10 +1396,7 @@ fn consume_delete_suppression(service: &SyncService, id_hash: &str) -> bool {
 
 fn cleanup_suppression(suppressions: &mut HashMap<String, Suppression>, id_hash: &str) {
     let remove = suppressions.get(id_hash).is_some_and(|value| {
-        value.edit_hash.is_none()
-            && value.favorite.is_none()
-            && !value.assets
-            && !value.deleted
+        value.edit_hash.is_none() && value.favorite.is_none() && !value.assets && !value.deleted
     });
     if remove {
         suppressions.remove(id_hash);
@@ -1490,7 +1486,9 @@ fn build_upsert_job(
                     continue;
                 }
                 if total.saturating_add(size) > preferences.max_total_bytes() {
-                    log::info!("remaining files stayed local because the batch sync cap was reached");
+                    log::info!(
+                        "remaining files stayed local because the batch sync cap was reached"
+                    );
                     break;
                 }
                 total = total.saturating_add(size);
@@ -1598,7 +1596,9 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     let temporary = path.with_extension(format!(
         "{}.part",
-        path.extension().and_then(|value| value.to_str()).unwrap_or("bin")
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bin")
     ));
     std::fs::write(&temporary, bytes)?;
     if path.exists() {
@@ -1688,8 +1688,8 @@ impl SyncStore {
     }
 
     fn save_preferences(&self, preferences: &SyncPreferences) -> Result<()> {
-        let value = serde_json::to_string(preferences)
-            .map_err(|error| Error::Other(error.to_string()))?;
+        let value =
+            serde_json::to_string(preferences).map_err(|error| Error::Other(error.to_string()))?;
         self.conn.lock().execute(
             "INSERT INTO sync_preferences (key, value) VALUES ('preferences', ?1)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
