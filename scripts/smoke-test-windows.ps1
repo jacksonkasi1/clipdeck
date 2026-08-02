@@ -18,19 +18,19 @@ function Resolve-ProjectPath([string]$Path) {
     return [IO.Path]::GetFullPath((Join-Path $projectRoot $Path))
 }
 
-function Stop-ClipdeckProcesses {
-    Get-Process -Name 'clipdeck' -ErrorAction SilentlyContinue | Stop-Process -Force
+function Stop-ClipboardAppProcesses {
+    Get-Process -Name 'clipmo', 'clipdeck' -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
 }
 
-function Get-ClipdeckUninstaller {
+function Get-ClipboardAppUninstaller {
     $roots = @(
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
     foreach ($entry in Get-ItemProperty $roots -ErrorAction SilentlyContinue) {
-        if ($entry.DisplayName -like 'Clipdeck*' -and $entry.UninstallString) {
+        if (($entry.DisplayName -like 'Clipmo*' -or $entry.DisplayName -like 'Clipdeck*') -and $entry.UninstallString) {
             return [string]$entry.UninstallString
         }
     }
@@ -38,26 +38,26 @@ function Get-ClipdeckUninstaller {
 }
 
 function Invoke-QuietUninstall {
-    $command = Get-ClipdeckUninstaller
+    $command = Get-ClipboardAppUninstaller
     if (-not $command) { return }
-    Stop-ClipdeckProcesses
+    Stop-ClipboardAppProcesses
     $match = [regex]::Match($command, '^\s*"?([^"\r\n]+?\.exe)"?\s*(.*)$')
-    if (-not $match.Success) { throw "Could not parse Clipdeck uninstall command: $command" }
+    if (-not $match.Success) { throw "Could not parse clipboard-app uninstall command: $command" }
     $arguments = @('/S')
     if ($match.Groups[2].Value.Trim()) { $arguments += $match.Groups[2].Value.Trim() }
     $process = Start-Process -FilePath $match.Groups[1].Value -ArgumentList $arguments -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Previous Clipdeck uninstall failed with code $($process.ExitCode)." }
+    if ($process.ExitCode -ne 0) { throw "Previous clipboard-app uninstall failed with code $($process.ExitCode)." }
 }
 
-function Get-ClipdeckShortcut {
+function Get-ClipmoShortcut {
     $roots = @(
         [Environment]::GetFolderPath('StartMenu'),
         [Environment]::GetFolderPath('CommonStartMenu')
     ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
     $shortcuts = @($roots | ForEach-Object {
-        Get-ChildItem -LiteralPath $_ -Filter 'Clipdeck*.lnk' -File -Recurse -ErrorAction SilentlyContinue
+        Get-ChildItem -LiteralPath $_ -Filter 'Clipmo*.lnk' -File -Recurse -ErrorAction SilentlyContinue
     } | Sort-Object LastWriteTimeUtc -Descending)
-    if ($shortcuts.Count -eq 0) { throw 'The installer did not create a Clipdeck Start Menu shortcut.' }
+    if ($shortcuts.Count -eq 0) { throw 'The installer did not create a Clipmo Start Menu shortcut.' }
     return $shortcuts[0]
 }
 
@@ -66,9 +66,9 @@ function Get-ShortcutTarget([string]$ShortcutPath) {
     return [string]$shell.CreateShortcut($ShortcutPath).TargetPath
 }
 
-function Get-ClipdeckProcess([string]$ExecutablePath) {
+function Get-ClipmoProcess([string]$ExecutablePath) {
     $expected = [IO.Path]::GetFullPath($ExecutablePath)
-    foreach ($process in Get-Process -Name 'clipdeck' -ErrorAction SilentlyContinue) {
+    foreach ($process in Get-Process -Name 'clipmo' -ErrorAction SilentlyContinue) {
         try {
             if ([IO.Path]::GetFullPath($process.Path) -eq $expected) { return $process }
         } catch { }
@@ -77,13 +77,12 @@ function Get-ClipdeckProcess([string]$ExecutablePath) {
 }
 
 function Save-WindowScreenshot([IntPtr]$Handle, [string]$Path) {
-    # Captures the composed HWND pixels, including native DWM clipping.
     Add-Type -AssemblyName System.Drawing
-    if (-not ('ClipdeckSmoke.NativeMethods' -as [type])) {
+    if (-not ('ClipmoSmoke.NativeMethods' -as [type])) {
         Add-Type @'
 using System;
 using System.Runtime.InteropServices;
-namespace ClipdeckSmoke {
+namespace ClipmoSmoke {
   public static class NativeMethods {
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -91,13 +90,13 @@ namespace ClipdeckSmoke {
 }
 '@
     }
-    $rect = New-Object ClipdeckSmoke.NativeMethods+RECT
-    if (-not [ClipdeckSmoke.NativeMethods]::GetWindowRect($Handle, [ref]$rect)) {
-        throw 'Could not read the Clipdeck window bounds for screenshot capture.'
+    $rect = New-Object ClipmoSmoke.NativeMethods+RECT
+    if (-not [ClipmoSmoke.NativeMethods]::GetWindowRect($Handle, [ref]$rect)) {
+        throw 'Could not read the Clipmo window bounds for screenshot capture.'
     }
     $width = $rect.Right - $rect.Left
     $height = $rect.Bottom - $rect.Top
-    if ($width -lt 400 -or $height -lt 400) { throw "Clipdeck window bounds are invalid: ${width}x${height}." }
+    if ($width -lt 400 -or $height -lt 400) { throw "Clipmo window bounds are invalid: ${width}x${height}." }
     $directory = Split-Path -Parent $Path
     if ($directory) { New-Item -ItemType Directory -Path $directory -Force | Out-Null }
     $bitmap = New-Object Drawing.Bitmap $width, $height
@@ -112,12 +111,12 @@ namespace ClipdeckSmoke {
 }
 
 function Initialize-WindowMethods {
-    if (-not ('ClipdeckSmoke.WindowMethods' -as [type])) {
+    if (-not ('ClipmoSmoke.WindowMethods' -as [type])) {
         Add-Type @'
 using System;
 using System.Text;
 using System.Runtime.InteropServices;
-namespace ClipdeckSmoke {
+namespace ClipmoSmoke {
   public static class WindowMethods {
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr parameter);
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
@@ -133,47 +132,43 @@ namespace ClipdeckSmoke {
     }
 }
 
-# Prints every visible top-level window owned by the installed build together
-# with its native styles. Packaged style regressions are otherwise invisible in
-# CI, and this also proves which HWND the assertions below inspect.
 function Write-WindowDiagnostics([int]$ProcessId, [string]$Label) {
     Initialize-WindowMethods
     Write-Host "--- $Label : visible top-level windows of process $ProcessId ---"
-    $callback = [ClipdeckSmoke.WindowMethods+EnumWindowsProc]{
+    $callback = [ClipmoSmoke.WindowMethods+EnumWindowsProc]{
         param([IntPtr]$hwnd, [IntPtr]$parameter)
         $owner = [uint32]0
-        [void][ClipdeckSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
-        if ($owner -eq $ProcessId -and [ClipdeckSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
+        [void][ClipmoSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+        if ($owner -eq $ProcessId -and [ClipmoSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
             $text = New-Object Text.StringBuilder 256
-            [void][ClipdeckSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
+            [void][ClipmoSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
             $class = New-Object Text.StringBuilder 256
-            [void][ClipdeckSmoke.WindowMethods]::GetClassName($hwnd, $class, $class.Capacity)
-            $style = [ClipdeckSmoke.WindowMethods]::GetWindowLong($hwnd, -16)
-            $exStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($hwnd, -20)
+            [void][ClipmoSmoke.WindowMethods]::GetClassName($hwnd, $class, $class.Capacity)
+            $style = [ClipmoSmoke.WindowMethods]::GetWindowLong($hwnd, -16)
+            $exStyle = [ClipmoSmoke.WindowMethods]::GetWindowLong($hwnd, -20)
             Write-Host ('  hwnd=0x{0:X} style=0x{1:X8} exStyle=0x{2:X8} class="{3}" title="{4}"' -f [int64]$hwnd, ([uint32]$style), ([uint32]$exStyle), $class.ToString(), $text.ToString())
         }
         return $true
     }
-    [void][ClipdeckSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
+    [void][ClipmoSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
     Write-Host '--- end window diagnostics ---'
 }
 
 function Get-VisibleWindow([int]$ProcessId, [string]$Title) {
     Initialize-WindowMethods
-    $match = [IntPtr]::Zero
-    $callback = [ClipdeckSmoke.WindowMethods+EnumWindowsProc]{
+    $callback = [ClipmoSmoke.WindowMethods+EnumWindowsProc]{
         param([IntPtr]$hwnd, [IntPtr]$parameter)
         $owner = [uint32]0
-        [void][ClipdeckSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
-        if ($owner -eq $ProcessId -and [ClipdeckSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
+        [void][ClipmoSmoke.WindowMethods]::GetWindowThreadProcessId($hwnd, [ref]$owner)
+        if ($owner -eq $ProcessId -and [ClipmoSmoke.WindowMethods]::IsWindowVisible($hwnd)) {
             $text = New-Object Text.StringBuilder 256
-            [void][ClipdeckSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
+            [void][ClipmoSmoke.WindowMethods]::GetWindowText($hwnd, $text, $text.Capacity)
             if ($text.ToString() -eq $Title) { $script:foundWindow = $hwnd; return $false }
         }
         return $true
     }
     $script:foundWindow = [IntPtr]::Zero
-    [void][ClipdeckSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
+    [void][ClipmoSmoke.WindowMethods]::EnumWindows($callback, [IntPtr]::Zero)
     return $script:foundWindow
 }
 
@@ -216,30 +211,34 @@ $installerPath = Resolve-ProjectPath $Installer
 $mainScreenshotPath = Resolve-ProjectPath $MainScreenshot
 $quickScreenshotPath = Resolve-ProjectPath $QuickScreenshot
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
-    throw "Clipdeck installer was not found: $installerPath"
+    throw "Clipmo installer was not found: $installerPath"
+}
+if ((Split-Path -Leaf $installerPath) -notlike 'Clipmo_*_x64-setup.exe') {
+    throw "Installer is not using the Clipmo release name: $installerPath"
 }
 
-$readyFile = Join-Path ([IO.Path]::GetTempPath()) ("clipdeck-ready-" + [guid]::NewGuid() + '.json')
+$readyFile = Join-Path ([IO.Path]::GetTempPath()) ("clipmo-ready-" + [guid]::NewGuid() + '.json')
 $quickReadyFile = [IO.Path]::ChangeExtension($readyFile, 'quick.json')
 $quickFocusFile = [IO.Path]::ChangeExtension($readyFile, 'quick-focus.json')
 $quickStyleFile = [IO.Path]::ChangeExtension($readyFile, 'quick-style.json')
+# Kept as an internal compatibility probe while existing native test hooks use it.
 $oldReadyFile = [Environment]::GetEnvironmentVariable('CLIPDECK_READY_FILE', 'Process')
 try {
-    # This deliberately exercises a fresh install even when a prior Clipdeck build
-    # is present on the test machine.
     Invoke-QuietUninstall
-    Stop-ClipdeckProcesses
+    Stop-ClipboardAppProcesses
     $install = Start-Process -FilePath $installerPath -ArgumentList '/S' -Wait -PassThru
-    if ($install.ExitCode -ne 0) { throw "Clipdeck installer failed with code $($install.ExitCode)." }
+    if ($install.ExitCode -ne 0) { throw "Clipmo installer failed with code $($install.ExitCode)." }
 
-    $shortcut = Get-ClipdeckShortcut
+    $shortcut = Get-ClipmoShortcut
     $target = Get-ShortcutTarget $shortcut.FullName
     if (-not $target -or -not (Test-Path -LiteralPath $target -PathType Leaf)) {
-        throw "Clipdeck Start Menu shortcut has an invalid target: $target"
+        throw "Clipmo Start Menu shortcut has an invalid target: $target"
+    }
+    if ((Split-Path -Leaf $target) -ne 'clipmo.exe') {
+        throw "Clipmo shortcut does not target clipmo.exe: $target"
     }
 
     [Environment]::SetEnvironmentVariable('CLIPDECK_READY_FILE', $readyFile, 'Process')
-    # Start the .lnk itself: this verifies the same Start Menu launch path users use.
     Start-Process -FilePath $shortcut.FullName
 
     $deadline = [DateTime]::UtcNow.AddSeconds($StartupTimeoutSeconds)
@@ -247,10 +246,10 @@ try {
     $ready = $null
     while ([DateTime]::UtcNow -lt $deadline) {
         Start-Sleep -Milliseconds 250
-        $process = Get-ClipdeckProcess $target
+        $process = Get-ClipmoProcess $target
         if ($process) {
             $process.Refresh()
-            if ($process.HasExited) { throw "Clipdeck exited during startup with code $($process.ExitCode)." }
+            if ($process.HasExited) { throw "Clipmo exited during startup with code $($process.ExitCode)." }
             if ($process.MainWindowTitle -like '*WebView2*') {
                 throw "A blocking WebView2 error dialog opened: $($process.MainWindowTitle)"
             }
@@ -261,13 +260,13 @@ try {
         }
     }
 
-    if (-not $process) { throw 'The installed Clipdeck process was not created from the Start Menu shortcut.' }
-    if (-not $ready) { throw 'Clipdeck never emitted frontend readiness; the Tauri webview did not initialize.' }
+    if (-not $process) { throw 'The installed Clipmo process was not created from the Start Menu shortcut.' }
+    if (-not $ready) { throw 'Clipmo never emitted frontend readiness; the Tauri webview did not initialize.' }
     if (-not $ready.frontendReady -or -not $ready.windowCreated -or -not $ready.windowVisible -or $ready.windowLabel -ne 'main') {
-        throw "Invalid Clipdeck readiness payload: $($ready | ConvertTo-Json -Compress)"
+        throw "Invalid Clipmo readiness payload: $($ready | ConvertTo-Json -Compress)"
     }
     if ([int]$ready.processId -ne $process.Id) {
-        throw "Readiness came from PID $($ready.processId), not installed Clipdeck PID $($process.Id)."
+        throw "Readiness came from PID $($ready.processId), not installed Clipmo PID $($process.Id)."
     }
 
     $windowDeadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -276,27 +275,25 @@ try {
         if ($process.MainWindowTitle -like '*WebView2*') {
             throw "A blocking WebView2 error dialog opened: $($process.MainWindowTitle)"
         }
-        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -like 'Clipdeck*') { break }
+        if ($process.MainWindowHandle -ne [IntPtr]::Zero -and $process.MainWindowTitle -like 'Clipmo*') { break }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $windowDeadline)
-    if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -notlike 'Clipdeck*') {
-        throw 'The real visible Clipdeck main window was not created.'
+    if ($process.MainWindowHandle -eq [IntPtr]::Zero -or $process.MainWindowTitle -notlike 'Clipmo*') {
+        throw 'The real visible Clipmo main window was not created.'
     }
 
     Save-WindowScreenshot $process.MainWindowHandle $mainScreenshotPath
     if (-not (Test-Path -LiteralPath $mainScreenshotPath -PathType Leaf) -or (Get-Item $mainScreenshotPath).Length -le 1024) {
-        throw 'Clipdeck main startup screenshot was not captured.'
+        throw 'Clipmo main startup screenshot was not captured.'
     }
     Assert-ScreenshotContent $mainScreenshotPath 'Main window'
 
-    # Ask the already-running installed binary to route a deterministic request
-    # through the single-instance callback and the production readiness gate.
     Start-Process -FilePath $target -ArgumentList '--show-quick' -Wait
     $quickDeadline = [DateTime]::UtcNow.AddSeconds(15)
     $quickReady = Wait-ForJson $quickReadyFile $quickDeadline
     $quickFocus = Wait-ForJson $quickFocusFile $quickDeadline
     do {
-        $quickHandle = Get-VisibleWindow $process.Id 'Clipdeck quick clipboard'
+        $quickHandle = Get-VisibleWindow $process.Id 'Clipmo quick clipboard'
         if ($quickHandle -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $quickDeadline)
@@ -306,9 +303,9 @@ try {
     if (-not $quickFocus.searchFocused) { throw 'Quick search did not confirm focus after opening.' }
     if ($quickHandle -eq [IntPtr]::Zero) { throw 'The ready quick window is not visible.' }
 
-    $quickRect = New-Object ClipdeckSmoke.NativeMethods+RECT
-    [void][ClipdeckSmoke.NativeMethods]::GetWindowRect($quickHandle, [ref]$quickRect)
-    $dpi = [Math]::Max(96, [ClipdeckSmoke.WindowMethods]::GetDpiForWindow($quickHandle))
+    $quickRect = New-Object ClipmoSmoke.NativeMethods+RECT
+    [void][ClipmoSmoke.NativeMethods]::GetWindowRect($quickHandle, [ref]$quickRect)
+    $dpi = [Math]::Max(96, [ClipmoSmoke.WindowMethods]::GetDpiForWindow($quickHandle))
     $logicalWidth = ($quickRect.Right - $quickRect.Left) * 96 / $dpi
     $logicalHeight = ($quickRect.Bottom - $quickRect.Top) * 96 / $dpi
     if ([Math]::Abs($logicalWidth - 560) -gt 40 -or [Math]::Abs($logicalHeight - 620) -gt 40) {
@@ -322,11 +319,8 @@ try {
         Write-Host "The app did not write a quick style report to $quickStyleFile."
     }
 
-    $quickStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -16)
-    $quickExStyle = [ClipdeckSmoke.WindowMethods]::GetWindowLong($quickHandle, -20)
-    # WS_CAPTION is the combination WS_BORDER | WS_DLGFRAME. Testing for either
-    # bit alone incorrectly rejects a frameless DWM window that retains only a
-    # border style for resize/shadow behavior.
+    $quickStyle = [ClipmoSmoke.WindowMethods]::GetWindowLong($quickHandle, -16)
+    $quickExStyle = [ClipmoSmoke.WindowMethods]::GetWindowLong($quickHandle, -20)
     if (($quickStyle -band 0x00C00000) -eq 0x00C00000) {
         throw ('Quick window unexpectedly has caption decorations (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
     }
@@ -341,10 +335,10 @@ try {
     Start-Process -FilePath $target -ArgumentList '--hide-quick' -Wait
     $hideDeadline = [DateTime]::UtcNow.AddSeconds(5)
     do {
-        if ((Get-VisibleWindow $process.Id 'Clipdeck quick clipboard') -eq [IntPtr]::Zero) { break }
+        if ((Get-VisibleWindow $process.Id 'Clipmo quick clipboard') -eq [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $hideDeadline)
-    if ((Get-VisibleWindow $process.Id 'Clipdeck quick clipboard') -ne [IntPtr]::Zero) {
+    if ((Get-VisibleWindow $process.Id 'Clipmo quick clipboard') -ne [IntPtr]::Zero) {
         throw 'Quick window did not hide through the deterministic native command.'
     }
 
@@ -353,7 +347,7 @@ try {
     $reopenDeadline = [DateTime]::UtcNow.AddSeconds(10)
     $quickFocus = Wait-ForJson $quickFocusFile $reopenDeadline
     do {
-        $quickHandle = Get-VisibleWindow $process.Id 'Clipdeck quick clipboard'
+        $quickHandle = Get-VisibleWindow $process.Id 'Clipmo quick clipboard'
         if ($quickHandle -ne [IntPtr]::Zero) { break }
         Start-Sleep -Milliseconds 150
     } while ([DateTime]::UtcNow -lt $reopenDeadline)
@@ -364,10 +358,10 @@ try {
     Assert-ScreenshotContent $quickScreenshotPath 'Reopened quick window'
     Remove-Item -LiteralPath $firstQuick -Force -ErrorAction SilentlyContinue
 
-    Write-Host "Verified installed Clipdeck main and reusable quick UI (PID $($process.Id)); main=$mainScreenshotPath; quick=$quickScreenshotPath"
+    Write-Host "Verified installed Clipmo main and reusable quick UI (PID $($process.Id)); main=$mainScreenshotPath; quick=$quickScreenshotPath"
 } finally {
     [Environment]::SetEnvironmentVariable('CLIPDECK_READY_FILE', $oldReadyFile, 'Process')
-    Stop-ClipdeckProcesses
+    Stop-ClipboardAppProcesses
     Invoke-QuietUninstall
     Remove-Item -LiteralPath $readyFile, $quickReadyFile, $quickFocusFile, $quickStyleFile -Force -ErrorAction SilentlyContinue
 }
