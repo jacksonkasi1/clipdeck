@@ -50,6 +50,10 @@ $certificate = $imported | Where-Object { $_.HasPrivateKey } | Select-Object -Fi
 if (-not $certificate) {
     throw 'The imported Windows signing certificate does not contain a private key.'
 }
+$publisher = $certificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+if ($publisher -ne 'Jackson Kasi') {
+    throw "The code-signing certificate publisher must be 'Jackson Kasi'; imported '$publisher' ($($certificate.Subject))."
+}
 
 $config = Get-Content (Join-Path $PSScriptRoot '../src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json
 $config.bundle.windows | Add-Member -NotePropertyName certificateThumbprint -NotePropertyValue $certificate.Thumbprint -Force

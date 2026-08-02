@@ -78,6 +78,9 @@ jobs:
       - name: Test frontend
         run: npm test
 
+      - name: Build and type-check frontend
+        run: npm run build
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
 
@@ -109,6 +112,11 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           WINDOWS_TIMESTAMP_URL: ${{ secrets.WINDOWS_TIMESTAMP_URL }}
         run: ./scripts/prepare-windows-signing.ps1
+
+      - name: Require trusted signing for tagged releases
+        if: github.ref_type == 'tag' && steps.signing.outputs.enabled != 'true'
+        shell: pwsh
+        run: throw 'Tagged Clipmo releases require WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD; refusing to publish an unsigned installer.'
 
       - name: Build NSIS installer
         shell: pwsh

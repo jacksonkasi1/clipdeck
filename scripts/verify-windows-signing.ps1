@@ -19,15 +19,32 @@ if (-not $installer) {
 }
 
 $mustBeSigned = $ExpectedSigned -eq 'true'
-foreach ($file in @((Get-Item $application), $installer)) {
+$results = foreach ($file in @((Get-Item $application), $installer)) {
     $signature = Get-AuthenticodeSignature -FilePath $file.FullName
     $subject = if ($signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { 'none' }
-    Write-Host "$($file.Name): signature=$($signature.Status); signer=$subject"
+    $publisher = if ($signature.SignerCertificate) {
+        $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+    } else {
+        'none'
+    }
+    Write-Host "$($file.Name): signature=$($signature.Status); publisher=$publisher; signer=$subject"
     if ($mustBeSigned -and $signature.Status -ne [Management.Automation.SignatureStatus]::Valid) {
         throw "$($file.Name) was expected to have a valid Authenticode signature, but its status is $($signature.Status)."
     }
+    if ($mustBeSigned -and $publisher -ne 'Jackson Kasi') {
+        throw "$($file.Name) was signed by '$publisher', not the required publisher 'Jackson Kasi'."
+    }
+    [pscustomobject]@{ File = $file.Name; Status = [string]$signature.Status; Publisher = $publisher }
 }
 
-if (-not $mustBeSigned) {
-    Write-Warning 'This build is unsigned because no trusted Windows certificate secret was available. Publisher metadata is embedded, but SmartScreen trust requires a real Authenticode certificate.'
+if ($mustBeSigned) {
+    $summary = @('### Authenticode verification: signed and valid', '', '| File | Status | Publisher |', '| --- | --- | --- |')
+    $summary += $results | ForEach-Object { "| ``$($_.File)`` | $($_.Status) | $($_.Publisher) |" }
+} else {
+    $message = 'This verification artifact is unsigned because no trusted Windows certificate secret was available. Publisher metadata alone does not make it a verified-publisher installer.'
+    Write-Warning $message
+    $summary = @('### Authenticode verification: unsigned', '', $message)
+}
+if ($env:GITHUB_STEP_SUMMARY) {
+    $summary | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8
 }
