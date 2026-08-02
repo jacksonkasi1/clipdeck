@@ -17,8 +17,15 @@ import type {
 // ** import lib
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { confirm, open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
+
+async function openClipmoSettings(): Promise<void> {
+  await invoke<void>('open_settings_window');
+  const settings = await WebviewWindow.getByLabel('settings');
+  await settings?.setTitle('Clipmo Settings');
+}
 
 // Thin typed wrappers around native calls. Components never use raw command
 // names, keeping the Rust/TypeScript boundary centralized and type checked.
@@ -50,7 +57,7 @@ export const api = {
   pruneNow: () => invoke<void>('prune_now'),
   appearance: () => invoke<SystemAppearance>('appearance'),
   syncNativeAppearance: () => invoke<SystemAppearance>('sync_native_appearance'),
-  openSettingsWindow: () => invoke<void>('open_settings_window'),
+  openSettingsWindow: openClipmoSettings,
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
   openStorageFolder: () => invoke<void>('open_storage_folder'),
   hideWindow: () => invoke<void>('hide_window'),
@@ -63,11 +70,6 @@ export const api = {
   toggleQuickPalette: () => invoke<void>('toggle_quick_palette'),
   showFullApplication: () => invoke<void>('show_full_application'),
   hideFullApplication: () => invoke<void>('hide_full_application'),
-  /**
-   * Mirrors the pin state into native state. The Rust `Focused(false)` handler
-   * reads it to decide whether the quick palette light-dismisses, so this
-   * cannot live in React state alone.
-   */
   setQuickPinned: (value: boolean) => invoke<boolean>('set_quick_pinned', { value }),
   setAlwaysOnTop: (value: boolean) => invoke<boolean>('set_always_on_top', { value }),
   setPreviewVisible: (value: boolean) => invoke<boolean>('set_preview_visible', { value }),
@@ -86,7 +88,7 @@ export const api = {
     multiple: true,
     filters: [{ name: 'Applications', extensions: ['exe'] }],
   }),
-  confirm: (message: string, title = 'Clipdeck') =>
+  confirm: (message: string, title = 'Clipmo') =>
     confirm(message, { title, kind: 'warning' }),
   revealItem: (path: string) => revealItemInDir(path),
 };
