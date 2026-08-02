@@ -28,7 +28,7 @@ describe('Settings accessibility', () => {
         <Row id="snapshot-limit" label="Snapshot limit" description="Limit stored bytes.">
           <NumberInput value={512} min={1} max={10_240} step={64} onChange={() => undefined} />
         </Row>
-        <Row id="global-hotkey" label="Open Clipdeck" description={SHORTCUT_RECORDER_DESCRIPTION}>
+        <Row id="global-hotkey" label="Open Clipmo" description={SHORTCUT_RECORDER_DESCRIPTION}>
           <ShortcutRecorder value="Ctrl+Shift+V" onChange={() => undefined} />
         </Row>
       </>,
