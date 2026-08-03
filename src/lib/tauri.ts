@@ -9,6 +9,7 @@ import type {
   ItemKind,
   ListQuery,
   PasteFlavor,
+  QuickReadinessState,
   Settings,
   SyncState,
   SystemAppearance,
@@ -64,6 +65,9 @@ export const api = {
   windowMode: () => invoke<'quick' | 'full' | 'settings'>('window_mode'),
   signalFrontendReady: (searchVisible: boolean, layoutVisible: boolean) =>
     invoke<void>('signal_frontend_ready', { searchVisible, layoutVisible }),
+  signalQuickDataHydrated: (hydrated: boolean) =>
+    invoke<void>('signal_quick_data_hydrated', { hydrated }),
+  quickReadinessState: () => invoke<QuickReadinessState>('quick_readiness_state'),
   signalQuickSearchFocused: () => invoke<void>('signal_quick_search_focused'),
   showQuickPalette: () => invoke<void>('show_quick_palette'),
   hideQuickPalette: () => invoke<void>('hide_quick_palette'),

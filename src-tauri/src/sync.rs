@@ -1150,6 +1150,7 @@ fn import_files(
             is_directory: false,
             status: StoredFileStatus::Ready,
             message: None,
+            thumb_path: None,
         });
     }
 

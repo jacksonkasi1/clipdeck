@@ -56,14 +56,15 @@ export default function App() {
       setQuickEntering(false);
       window.setTimeout(() => setQuickEntering(true), 0);
       fallback = window.setTimeout(() => setQuickEntering(false), 180);
-      // Resync from SQLite on every open. The quick palette hides itself
-      // after each paste (Esc, focus loss, click on row), so a file/image
-      // copy that lands while the palette is hidden relies on this re-fetch
-      // to make the new row visible. The store's `historyGeneration`
-      // counter coalesces any overlapping refresh requests, so a rapid
-      // double-tap of the global shortcut still yields a single, current
-      // SQLite read.
-      void useStore.getState().refresh().catch((error: unknown) => {
+      // The native reveal already waits for both `frontend_ready` and the
+      // first SQLite read, so by the time this listener fires the store is
+      // already hydrated. We still re-fetch on every open because the user
+      // may have copied items while the palette was hidden, and the
+      // visibility-resync listener (in `bootStore`) covers the same case
+      // for a window that was merely occluded rather than closed. Both
+      // paths share `requestResync`, so a near-simultaneous open + visible
+      // event only triggers one SQLite read.
+      void useStore.getState().requestResync('open').catch((error: unknown) => {
         console.error('Failed to resync quick clipboard on open', error);
       });
       window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
@@ -233,6 +234,15 @@ export default function App() {
       const layoutVisible = Boolean(layout && layout.getBoundingClientRect().height > 0);
       if (!searchVisible || !layoutVisible) {
         scheduleRetry(100);
+        return;
+      }
+      // Quick View refuses to reveal until both the layout AND the first
+      // SQLite read have landed. The full window has no such constraint, so
+      // we only block on hydration when the current webview is the Quick
+      // palette.
+      const hydrated = useStore.getState().hydrated;
+      if (mode === 'quick' && !hydrated) {
+        scheduleRetry(80);
         return;
       }
 

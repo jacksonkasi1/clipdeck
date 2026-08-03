@@ -6,7 +6,7 @@ import { create } from 'zustand';
 
 import { HISTORY_PAGE_SIZE, mergeUniquePage, pageMayHaveMore } from './paging';
 import { api, on } from './tauri';
-import { resolveWindowMode, type WindowMode } from './window-mode';
+import { isDevBuild, resolveWindowMode, type WindowMode } from './window-mode';
 
 interface State {
   items: ClipItem[];
@@ -35,12 +35,26 @@ interface State {
   showCommands: boolean;
   /** Native listeners and initial requests have completed (successfully or not). */
   bootstrapped: boolean;
+  /**
+   * The first SQLite read for this webview has landed and the list reflects
+   * the current history. The Quick View refuses to render "ready" content
+   * until this flag is true; the full window also gates its first paint on it
+   * to keep the two surfaces in lockstep.
+   */
+  hydrated: boolean;
   /** A recoverable startup error shown in the list instead of a blank surface. */
   bootError: string | null;
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
   nextOffset: number;
+  /**
+   * Monotonic id of the most recent user-driven resync request (opening
+   * Quick View, becoming visible after being hidden, focus regained). Pairs
+   * with the native `quick_open_pending` flag so the React store and the
+   * native show path agree on the contract end-to-end.
+   */
+  resyncGeneration: number;
   /**
    * Optional override consumed by `refresh()` after a destructive action.
    * Stores the chosen successor id so the user lands on the same logical row
@@ -52,6 +66,7 @@ interface State {
 interface Actions {
   refresh: () => Promise<void>;
   loadMore: () => Promise<void>;
+  requestResync: (source: ResyncSource) => Promise<void>;
   setSearch: (search: string) => Promise<void>;
   toggleKind: (kind: ItemKind) => Promise<void>;
   toggleFavoritesOnly: () => Promise<void>;
@@ -77,6 +92,17 @@ interface Actions {
   setShowCommands: (show: boolean) => void;
   applyAppearance: (appearance: SystemAppearance) => void;
 }
+
+/**
+ * Why a resync was requested. The store and the diagnostics layer use this
+ * to disambiguate the four real paths into a single `requestResync`:
+ *
+ * - `open`: emitted by the native `clipdeck:quick-opened` listener
+ * - `visible`: window transitioned from hidden to visible
+ * - `focus`: the webview regained focus while it was already visible
+ * - `manual`: the user pressed F5 or another explicit refresh trigger
+ */
+export type ResyncSource = 'open' | 'visible' | 'focus' | 'manual';
 
 let historyGeneration = 0;
 
@@ -109,11 +135,13 @@ export const useStore = create<State & Actions>((set, get) => ({
   showDetails: true,
   showCommands: false,
   bootstrapped: false,
+  hydrated: false,
   bootError: null,
   loading: true,
   loadingMore: false,
   hasMore: false,
   nextOffset: 0,
+  resyncGeneration: 0,
 
   refresh: async () => {
     // Each call bumps the shared `historyGeneration` so the *latest* call is
@@ -126,7 +154,18 @@ export const useStore = create<State & Actions>((set, get) => ({
     try {
       const query = buildQuery(get(), 0);
       const [page, counts] = await Promise.all([api.listItems(query), api.counts()]);
-      if (generation !== historyGeneration) return;
+      if (generation !== historyGeneration) {
+        if (isDevBuild()) {
+          console.debug('[clipmo] refresh discarded as stale', {
+            window: get().mode,
+            discardedGeneration: generation,
+            currentGeneration: historyGeneration,
+            requestedLimit: query.limit,
+            requestedOffset: query.offset,
+          });
+        }
+        return;
+      }
       const items = mergeUniquePage([], page);
       set((s) => {
         const override = s.pendingSelection;
@@ -155,6 +194,14 @@ export const useStore = create<State & Actions>((set, get) => ({
         const nextAnchor = anchorStillVisible
           ? s.selectionAnchor
           : (nextSelectedIds[0] ?? nextSelectedId);
+        if (isDevBuild()) {
+          console.debug('[clipmo] refresh committed', {
+            window: s.mode,
+            generation,
+            requestedQuery: query,
+            committedIds: items.map((i) => i.id),
+          });
+        }
         return {
           items,
           counts,
@@ -164,11 +211,28 @@ export const useStore = create<State & Actions>((set, get) => ({
           selectedIds: nextSelectedIds,
           selectionAnchor: nextSelectedIds.length ? nextAnchor : null,
           pendingSelection: null,
+          hydrated: true,
         };
       });
     } finally {
       if (generation === historyGeneration) set({ loading: false });
     }
+  },
+
+  requestResync: async (source) => {
+    // Each user-driven resync bumps `resyncGeneration`. The store drops any
+    // older in-flight refresh by way of `historyGeneration` (set inside
+    // `refresh()` itself), so the list can never regress to a state that
+    // existed before the user-visible reason for the resync.
+    set((state) => ({ resyncGeneration: state.resyncGeneration + 1 }));
+    if (isDevBuild()) {
+      console.debug('[clipmo] resync requested', {
+        window: get().mode,
+        source,
+        resyncGeneration: get().resyncGeneration,
+      });
+    }
+    await get().refresh();
   },
 
   loadMore: async () => {
@@ -470,7 +534,8 @@ export async function bootStore() {
   );
   // This is the runtime readiness boundary: React is mounted and native event
   // listeners are installed. Initial data may still be loading, which is why
-  // ItemList has a visible loading state and readiness never waits on API data.
+  // ItemList has a visible loading state and the native show path waits for
+  // the dedicated `hydrated` flag before revealing the Quick palette.
   useStore.setState({
     bootstrapped: true,
     bootError: listenerFailure ? String(listenerFailure.reason) : null,
@@ -484,8 +549,13 @@ export async function bootStore() {
       console.error('Failed to read system appearance', error);
     }
   };
+  // The first refresh must finish before we tell the native side that the
+  // Quick View is allowed to reveal itself. A failure is still reported as
+  // hydrated (so the user sees the error surface rather than a blank window),
+  // but `bootError` is set so the UI can render the recovery copy.
+  const initialRefresh = useStore.getState().refresh();
   const loadResults = await Promise.allSettled([
-    useStore.getState().refresh(),
+    initialRefresh,
     useStore.getState().loadSettings(),
     useStore.getState().loadSyncState(),
     syncAppearance(),
@@ -496,9 +566,38 @@ export async function bootStore() {
   useStore.setState((state) => ({
     bootError: state.bootError ?? (loadFailure ? String(loadFailure.reason) : null),
     loading: false,
+    hydrated: true,
   }));
-  window.addEventListener('focus', () => void syncAppearance());
+  // Tell the native side the Quick View can now be revealed if it has been
+  // asked to open during the boot window. The command is a no-op on the full
+  // window label, so the same boot path can be reused by both webviews.
+  if (useStore.getState().mode === 'quick') {
+    try {
+      await api.signalQuickDataHydrated(true);
+    } catch (error) {
+      console.error('Failed to signal Quick View data hydration', error);
+    }
+  }
+  window.addEventListener('focus', () => {
+    void syncAppearance();
+    // Refocusing the webview is a strong hint that the user came back to it
+    // — the list may have been edited elsewhere in the meantime, so resync
+    // before they re-engage. Coalesced by `requestResync` + `historyGeneration`.
+    void useStore.getState().requestResync('focus').catch((error: unknown) => {
+      console.error('Failed to resync on focus', error);
+    });
+  });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void syncAppearance();
+    if (document.visibilityState === 'visible') {
+      void syncAppearance();
+      // Hidden → visible is the moment a Quick View that has been
+      // backgrounded for a while needs to catch up. The native open event
+      // would not fire on a normal reveal (the window was never closed), so
+      // we trigger a resync here. `requestResync` is no-op-safe for the
+      // open case because the open path also bumps the same generation.
+      void useStore.getState().requestResync('visible').catch((error: unknown) => {
+        console.error('Failed to resync on visibility change', error);
+      });
+    }
   });
 }

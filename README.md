@@ -17,8 +17,8 @@ The latest signed Windows installer is published on the
 [![Platform](https://img.shields.io/badge/platform-Windows%2011-0078d4)](https://github.com/jacksonkasi1/clipmo/releases/latest)
 [![License](https://img.shields.io/github/license/jacksonkasi1/clipmo)](LICENSE)
 
-**Direct download — [Clipmo 0.2.2 x64-setup.exe](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.2/Clipmo_0.2.2_x64-setup.exe)**
-(SHA-256 `F67E04AA10ED1AACCAA49CA58B16132087A5014221C844F331DF8444660676AB` — signed NSIS installer, ~2.30 MB)
+**Direct download — [Clipmo 0.2.3 x64-setup.exe](https://github.com/jacksonkasi1/clipmo/releases/download/v0.2.3/Clipmo_0.2.3_x64-setup.exe)**
+(SHA-256 `A26A04D8DF11825AD4DA1DAE3ECC1E3E16DF3D9924156375C1D326693CCDCA59` — signed NSIS installer, ~2.30 MB)
 
 The installer bootstraps WebView2 on machines that do not already have it, then
 creates a Start Menu shortcut, a desktop tray entry, and the `Ctrl + Shift + V`

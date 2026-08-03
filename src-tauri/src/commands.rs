@@ -468,6 +468,63 @@ pub async fn signal_quick_search_focused(window: tauri::WebviewWindow) -> Result
     Ok(())
 }
 
+/// Records that the quick webview's first SQLite read has landed. The native
+/// `show_quick` flow refuses to reveal the window until both this and the
+/// frontend-readiness flag are set, so a Quick View that opens for the first
+/// time cannot present a stale, partial or empty list. The readiness state is
+/// also exposed via `quick_readiness_state` so the frontend can render an
+/// explicit "Loading clipboard history…" surface while it waits, instead of
+/// pretending the list is complete.
+#[tauri::command]
+pub async fn signal_quick_data_hydrated(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    hydrated: bool,
+) -> Result<()> {
+    if window.label() != crate::window::QUICK_LABEL {
+        return Ok(());
+    }
+    let Some(state) = app.try_state::<AppState>() else {
+        return Ok(());
+    };
+    state
+        .quick_data_hydrated
+        .store(hydrated, std::sync::atomic::Ordering::Release);
+    log::info!("quick data hydrated = {hydrated}");
+    if hydrated
+        && state
+            .quick_frontend_ready
+            .load(std::sync::atomic::Ordering::Acquire)
+        && state
+            .quick_open_pending
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+    {
+        crate::window::show_ready_quick(&app);
+    }
+    Ok(())
+}
+
+/// Inspectable readiness snapshot. The frontend uses it to decide whether
+/// its loading chrome should still be on screen and to log any
+/// mismatch between the React and native views of the world.
+#[tauri::command]
+pub async fn quick_readiness_state(app: AppHandle) -> Result<crate::window::QuickReadinessState> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| Error::Other("AppState is missing".into()))?;
+    Ok(crate::window::QuickReadinessState {
+        frontend_ready: state
+            .quick_frontend_ready
+            .load(std::sync::atomic::Ordering::Acquire),
+        data_hydrated: state
+            .quick_data_hydrated
+            .load(std::sync::atomic::Ordering::Acquire),
+        open_pending: state
+            .quick_open_pending
+            .load(std::sync::atomic::Ordering::Acquire),
+    })
+}
+
 #[tauri::command]
 pub async fn show_quick_palette(app: AppHandle) -> Result<()> {
     crate::window::show_quick(&app);
@@ -938,6 +995,7 @@ impl TauriSink {
                 is_directory: PathBuf::from(path).is_dir(),
                 status: StoredFileStatus::Failed,
                 message: Some(message.to_string()),
+                thumb_path: None,
             })
             .collect();
         match self.db.set_file_assets(job.id, &assets) {
@@ -1001,6 +1059,7 @@ fn persist(
                 is_directory: PathBuf::from(path).is_dir(),
                 status: StoredFileStatus::Pending,
                 message: None,
+                thumb_path: None,
             })
             .collect()
     } else {
