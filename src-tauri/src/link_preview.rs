@@ -400,7 +400,7 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
     let digest = Sha256::digest(url.as_str().as_bytes());
     let ext = url
         .path_segments()
-        .and_then(|segments| segments.rfind(|s| !s.is_empty()))
+        .and_then(|mut segments| segments.rfind(|s| !s.is_empty()))
         .and_then(|name| name.rsplit_once('.'))
         .map(|(_, ext)| ext.to_ascii_lowercase())
         .filter(|ext| {
