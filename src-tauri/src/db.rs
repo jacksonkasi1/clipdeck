@@ -1299,6 +1299,7 @@ mod tests {
                 is_directory: false,
                 status: crate::models::StoredFileStatus::Ready,
                 message: None,
+                thumb_path: None,
             }],
             content_hash: "migration-paths".into(),
             ..Default::default()

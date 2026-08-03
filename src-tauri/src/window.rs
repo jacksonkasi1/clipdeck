@@ -171,7 +171,7 @@ pub fn frontend_ready(app: &AppHandle, label: &str) {
     }
 }
 
-fn show_ready_quick(app: &AppHandle) {
+pub fn show_ready_quick(app: &AppHandle) {
     let Some(window) = quick(app) else {
         log::error!("quick palette window is missing");
         return;

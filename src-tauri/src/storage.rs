@@ -363,6 +363,7 @@ fn failed_asset(original: &str, is_directory: bool, message: String) -> StoredFi
         is_directory,
         status: StoredFileStatus::Failed,
         message: Some(message),
+        thumb_path: None,
     }
 }
 
@@ -374,6 +375,7 @@ fn skipped_asset(original: &str, is_directory: bool, message: &str) -> StoredFil
         is_directory,
         status: StoredFileStatus::Skipped,
         message: Some(message.to_string()),
+        thumb_path: None,
     }
 }
 

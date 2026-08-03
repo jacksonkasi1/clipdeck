@@ -995,6 +995,7 @@ impl TauriSink {
                 is_directory: PathBuf::from(path).is_dir(),
                 status: StoredFileStatus::Failed,
                 message: Some(message.to_string()),
+                thumb_path: None,
             })
             .collect();
         match self.db.set_file_assets(job.id, &assets) {
@@ -1058,6 +1059,7 @@ fn persist(
                 is_directory: PathBuf::from(path).is_dir(),
                 status: StoredFileStatus::Pending,
                 message: None,
+                thumb_path: None,
             })
             .collect()
     } else {
