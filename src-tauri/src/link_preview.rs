@@ -21,7 +21,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -384,7 +384,6 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
     if !matches!(url.scheme(), "http" | "https") {
         return Ok(None);
     }
-    let deadline = Instant::now() + FETCH_TIMEOUT;
     let response = match powershell_fetch(url) {
         Ok(response) => response,
         Err(error) => {
@@ -401,8 +400,8 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
     let digest = Sha256::digest(url.as_str().as_bytes());
     let ext = url
         .path_segments()
-        .and_then(|segments| segments.filter(|s| !s.is_empty()).next_back())
-        .and_then(|name| name.rsplit_once('.'))
+        .and_then(|segments| segments.rfind(|s| !s.is_empty()))
+        .and_then(|name| name.rsplit_once('.'));
         .map(|(_, ext)| ext.to_ascii_lowercase())
         .filter(|ext| {
             matches!(

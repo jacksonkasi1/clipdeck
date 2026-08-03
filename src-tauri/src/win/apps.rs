@@ -1,4 +1,12 @@
 //! Best-effort Windows application discovery for the ignored-app picker.
+//!
+//! `allow(dead_code)` covers the discovery helpers and the small caching
+//! surface around them: under `cargo test` the `commands` module that wires
+//! them up is not compiled, so clippy would otherwise flag every entry
+//! point here as unused. In the production build every public symbol is
+//! reached by the Tauri command layer.
+
+#![allow(dead_code)]
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
