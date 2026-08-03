@@ -261,7 +261,7 @@ fn display_name(path: &Path) -> String {
 /// into the supplied cache directory (which must be inside the Tauri asset
 /// protocol scope) so the webview can render the result with `convertFileSrc`.
 /// Failures are silent — the row will simply fall back to the text glyph.
-#[cfg(not(test))]
+#[allow(dead_code)] // only used in the production clipboard path
 fn extract_icon(path: &Path, cache_root: &Path) -> Option<String> {
     let exe_str = path.as_os_str().to_str()?;
     super::apps::extract_icon_into(exe_str, cache_root)

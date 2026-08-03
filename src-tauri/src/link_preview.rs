@@ -21,6 +21,7 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use url::Url;
