@@ -21,6 +21,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod hotkey;
+pub mod link_preview;
 pub mod models;
 pub mod native_appearance;
 pub mod storage;
@@ -117,6 +118,7 @@ pub fn run() {
             commands::appearance,
             commands::open_settings_window,
             commands::open_external_url,
+            commands::fetch_link_preview,
             commands::open_storage_folder,
             commands::hide_window,
             commands::window_mode,

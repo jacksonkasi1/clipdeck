@@ -68,17 +68,22 @@ pub fn installed(refresh: bool) -> Vec<ApplicationInfo> {
 }
 
 pub fn extract_icon(executable_path: &str) -> Option<String> {
+    let cache_root = default_icon_cache_root();
+    extract_icon_into(executable_path, &cache_root)
+}
+
+/// Extracts an executable's icon to a cache directory and returns the absolute
+/// PNG path. Used both by the application-picker (`ignoredApps`) and by the
+/// source-app attribution pipeline; the result is keyed by the canonical path
+/// so the same executable resolves to a single icon across both code paths.
+pub fn extract_icon_into(executable_path: &str, cache_root: &Path) -> Option<String> {
     use sha2::{Digest, Sha256};
 
     let executable = Path::new(executable_path);
     if !executable.is_file() {
         return None;
     }
-    let cache_root = std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)?
-        .join("Clipdeck")
-        .join("icon-cache");
-    std::fs::create_dir_all(&cache_root).ok()?;
+    std::fs::create_dir_all(cache_root).ok()?;
     let digest = Sha256::digest(super::source::normalize_path(executable).as_bytes());
     let icon_path = cache_root.join(format!("{digest:x}.png"));
     if icon_path.is_file() {
@@ -93,6 +98,14 @@ pub fn extract_icon(executable_path: &str) -> Option<String> {
         .status()
         .ok()?;
     (status.success() && icon_path.is_file()).then(|| icon_path.to_string_lossy().into_owned())
+}
+
+fn default_icon_cache_root() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Clipdeck")
+        .join("icon-cache")
 }
 
 fn identity_for_path(path: &Path) -> IgnoredApp {
@@ -288,5 +301,19 @@ fn discover_packaged_apps(apps: &mut BTreeMap<String, ApplicationInfo>) {
             installed: true,
             recently_used: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_icon_into_returns_none_for_missing_files() {
+        let temp = std::env::temp_dir().join("clipmo-icon-test-missing");
+        let _ = std::fs::create_dir_all(&temp);
+        let result = extract_icon_into(r"C:\does\not\exist.exe", &temp);
+        assert!(result.is_none());
+        let _ = std::fs::remove_dir_all(&temp);
     }
 }

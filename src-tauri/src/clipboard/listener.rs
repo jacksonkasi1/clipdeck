@@ -15,6 +15,7 @@
 //! only windows do not receive broadcast messages, and `WM_CLIPBOARDUPDATE` is
 //! exactly that.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::Arc;
 use std::time::Duration;
@@ -63,7 +64,14 @@ pub struct ClipEvent {
 
 /// Starts the listener thread and returns once the hidden window has been
 /// registered with the shell.
-pub fn start_listener(sink: Arc<dyn CaptureSink>) -> std::io::Result<()> {
+///
+/// `icon_root` is the cache directory source-app icons are written into; it
+/// must be inside the Tauri asset-protocol scope so the webview can render
+/// the resulting PNG via `convertFileSrc`.
+pub fn start_listener(
+    sink: Arc<dyn CaptureSink>,
+    icon_root: PathBuf,
+) -> std::io::Result<()> {
     const EVENT_QUEUE_CAPACITY: usize = 32;
     let (event_tx, event_rx) = mpsc::sync_channel::<ClipEvent>(EVENT_QUEUE_CAPACITY);
     std::thread::Builder::new()
@@ -79,7 +87,7 @@ pub fn start_listener(sink: Arc<dyn CaptureSink>) -> std::io::Result<()> {
         .name("clipboard-listener".into())
         .spawn(move || {
             let failure_tx = ready_tx.clone();
-            if let Err(err) = run(event_tx, ready_tx) {
+            if let Err(err) = run(event_tx, ready_tx, icon_root) {
                 let _ = failure_tx.try_send(Err(err.to_string()));
                 log::error!("clipboard listener terminated: {err}");
             }
@@ -105,6 +113,7 @@ type BoxResult<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sy
 fn run(
     event_tx: SyncSender<ClipEvent>,
     ready_tx: SyncSender<std::result::Result<(), String>>,
+    icon_root: PathBuf,
 ) -> BoxResult<()> {
     unsafe {
         let class_name = to_wide("ClipdeckListener");
@@ -162,7 +171,7 @@ fn run(
         // Stash the sink on the window so the wndproc can recover it via
         // GetWindowLongPtrW. We only have one listener, so a thread-local
         // would also work; using the HWND keeps the API symmetrical.
-        set_user_data(hwnd, ListenerData { event_tx });
+        set_user_data(hwnd, ListenerData { event_tx, icon_root });
         ready_tx
             .send(Ok(()))
             .map_err(|_| "listener readiness receiver disconnected")?;
@@ -180,6 +189,7 @@ fn run(
 #[derive(Clone)]
 struct ListenerData {
     event_tx: SyncSender<ClipEvent>,
+    icon_root: PathBuf,
 }
 
 /// Window procedure. `WM_CLIPBOARDUPDATE` is the only custom message we
@@ -192,7 +202,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             // in principle clear it. Skip the event rather than panicking.
             if let Some(data) = get_user_data(hwnd) {
                 let foreground = source::current_foreground();
-                if let Some(event) = capture(foreground) {
+                if let Some(event) = capture(foreground, &data.icon_root) {
                     if data.event_tx.try_send(event).is_err() {
                         log::warn!("clipboard persistence queue is full; capture was skipped");
                     }
@@ -223,7 +233,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
 /// Returns `None` when the clipboard carries the sensitive-content flag or
 /// when none of our formats produced any data, both of which mean the change
 /// should be silently dropped.
-fn capture(foreground_hint: isize) -> Option<ClipEvent> {
+fn capture(foreground_hint: isize, icon_root: &std::path::Path) -> Option<ClipEvent> {
     let formats = Formats::register();
     let snapshot = formats::read_snapshot(&formats)?;
     let text = snapshot.text;
@@ -284,7 +294,7 @@ fn capture(foreground_hint: isize) -> Option<ClipEvent> {
             .collect(),
     };
 
-    let source = source::resolve(Some(foreground_hint));
+    let source = source::resolve(Some(foreground_hint), icon_root);
 
     let file_strings = files
         .iter()

@@ -352,8 +352,12 @@ pub async fn resolve_application_identity(
 }
 
 #[tauri::command]
-pub async fn extract_application_icon(executable_path: String) -> Result<Option<String>> {
-    Ok(crate::win::apps::extract_icon(&executable_path))
+pub async fn extract_application_icon(
+    state: tauri::State<'_, AppState>,
+    executable_path: String,
+) -> Result<Option<String>> {
+    let icon_root = crate::storage::icon_root(&state.storage_root.read());
+    Ok(crate::win::apps::extract_icon_into(&executable_path, &icon_root))
 }
 
 #[tauri::command]
@@ -375,6 +379,23 @@ pub async fn open_external_url(app: AppHandle, url: String) -> Result<()> {
     app.opener()
         .open_url(url, None::<&str>)
         .map_err(|error| Error::Other(error.to_string()))
+}
+
+/// Fetches Open Graph / Twitter Card metadata for a link-kind clipboard entry.
+///
+/// Returns `Ok(None)` for non-URL inputs, unreachable targets, or pages that
+/// publish no recognisable metadata — the frontend falls back to the existing
+/// minimal link card in those cases. The handler never panics; a `url::Url`
+/// parse failure is the only error path and it represents a programmer
+/// mistake (the frontend already routes the clipboard text through
+/// `tryParseScheme`).
+#[tauri::command]
+pub async fn fetch_link_preview(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> Result<Option<crate::models::LinkPreview>> {
+    let storage_root = state.storage_root.read().clone();
+    crate::link_preview::fetch(&storage_root, &url)
 }
 
 #[tauri::command]
@@ -821,7 +842,9 @@ pub fn install_clipboard_listener(app: &App) -> Result<()> {
         sync: state.sync.clone(),
         snapshot_tx,
     });
-    listener::start_listener(sink).map_err(|e| Error::Other(format!("listener start failed: {e}")))
+    let icon_root = crate::storage::icon_root(&state.storage_root.read());
+    listener::start_listener(sink, icon_root)
+        .map_err(|e| Error::Other(format!("listener start failed: {e}")))
 }
 
 /// Bridge from the listener thread to the DB and the webview.

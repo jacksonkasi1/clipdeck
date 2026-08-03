@@ -1,8 +1,9 @@
 // ** import lib
 import { useEffect, useState } from 'react';
-import { AppWindow, Plus, Tag, X } from 'lucide-react';
+import { Plus, Tag, X } from 'lucide-react';
 
 import { DeviceBadge } from './DeviceBadge';
+import { SourceIcon } from './SourceIcon';
 import { formatBytes } from '../lib/formatting';
 import { useStore } from '../lib/store';
 
@@ -32,7 +33,12 @@ export function DetailsTable() {
       <dl>
         <Row
           label="Application"
-          value={<span className="source-value"><AppWindow size={15} aria-hidden />{app}</span>}
+          value={
+            <span className="source-value">
+              <SourceIcon source={item.source} size={15} />
+              {app}
+            </span>
+          }
         />
         <Row label="Type" value={kind} />
         <Row label="Device" value={<DeviceBadge device={item.device} status={item.syncStatus} />} />
