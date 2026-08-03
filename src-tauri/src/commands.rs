@@ -76,6 +76,7 @@ pub struct FlavorBundle {
 
 #[tauri::command]
 pub async fn copy_to_clipboard(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     id: i64,
     flavor: PasteFlavor,
@@ -92,11 +93,16 @@ pub async fn copy_to_clipboard(
         html.as_deref(),
         rtf.as_deref(),
     )?;
+    // Tasting bumps `last_copied_at`, which reorders the row. The other window
+    // is not told by the local React state because the user action happens in
+    // just one webview, so broadcast the refresh signal.
+    let _ = app.emit("clip-updated", ());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn paste_active(
+    app: AppHandle,
     window: tauri::WebviewWindow,
     state: tauri::State<'_, AppState>,
     id: i64,
@@ -116,6 +122,11 @@ pub async fn paste_active(
         rtf.as_deref(),
     )?;
 
+    // A paste touches the row so it floats to the top in both windows. The
+    // user only sees the paste source window update optimistically, so emit
+    // the broadcast so the partner webview can re-fetch the new ordering.
+    let _ = app.emit("clip-updated", ());
+
     // Hide the window the paste came from *before* restoring focus. Hiding
     // `main` unconditionally would dismiss the full application whenever the
     // user pasted from the quick palette, and vice versa.
@@ -130,8 +141,17 @@ pub async fn paste_active(
 }
 
 #[tauri::command]
-pub async fn set_favorite(state: tauri::State<'_, AppState>, id: i64, value: bool) -> Result<()> {
+pub async fn set_favorite(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    id: i64,
+    value: bool,
+) -> Result<()> {
     state.db.set_favorite(id, value)?;
+    // A favourite toggle in one window must also resync the other: the other
+    // window's store may be hidden and would otherwise hold the old pin state
+    // until its own `clipdeck:quick-opened` rescue. Emit with the updated row.
+    let _ = app.emit("clip-updated", ());
     Ok(())
 }
 
@@ -165,26 +185,34 @@ pub async fn edit_item(
 }
 
 #[tauri::command]
-pub async fn delete_item(state: tauri::State<'_, AppState>, id: i64) -> Result<()> {
+pub async fn delete_item(app: AppHandle, state: tauri::State<'_, AppState>, id: i64) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
     let orphans = state.db.delete(id)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
+    // Both the quick and full windows must drop the row immediately. The
+    // window that did not perform the delete does not run its own `refresh()`
+    // after the IPC call, so the broadcast is the only way to keep the two
+    // stores in sync without waiting for a hotkey reopen.
+    let _ = app.emit("clip-updated", ());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn clear_history(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     include_favorites: bool,
 ) -> Result<()> {
     let _storage_guard = state.storage_operation.read();
     let orphans = state.db.clear(include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
+    let _ = app.emit("clip-updated", ());
     Ok(())
 }
 
 #[tauri::command]
 pub async fn clear_category(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     kind: ItemKind,
     include_favorites: bool,
@@ -192,6 +220,7 @@ pub async fn clear_category(
     let _storage_guard = state.storage_operation.read();
     let orphans = state.db.clear_kind(kind, include_favorites)?;
     cleanup_asset_paths(&state.storage_root.read(), orphans);
+    let _ = app.emit("clip-updated", ());
     Ok(())
 }
 

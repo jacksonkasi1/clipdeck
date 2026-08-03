@@ -116,6 +116,11 @@ export const useStore = create<State & Actions>((set, get) => ({
   nextOffset: 0,
 
   refresh: async () => {
+    // Each call bumps the shared `historyGeneration` so the *latest* call is
+    // the only one that can commit results. Older fetches that resolve after a
+    // newer one already started are silently dropped, so a slow SQLite read
+    // started before a `clip-updated` event can never overwrite the newer
+    // page that the event's own refresh will produce.
     const generation = ++historyGeneration;
     set({ loading: true, loadingMore: false });
     try {
