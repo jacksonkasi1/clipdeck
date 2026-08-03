@@ -1,22 +1,6 @@
 /* Final window-level polish kept separate from component styling so native
    DWM geometry and webview clipping stay easy to audit together. */
 
-html[data-mode='quick'],
-html[data-mode='quick'] body,
-html[data-mode='quick'] #root,
-.app-frame.is-quick,
-.app-frame.is-quick::before,
-.app-frame.is-quick .quick-content {
-  border-radius: 10px;
-}
-
-html[data-mode='quick'] body,
-html[data-mode='quick'] #root,
-.app-frame.is-quick,
-.app-frame.is-quick .quick-content {
-  overflow: hidden;
-}
-
 /* The full application should give the preview the visual priority while the
    history remains comfortably wide enough for titles and source labels. */
 .app-frame.is-full:not(.preview-is-hidden) {

@@ -668,7 +668,7 @@ pub fn install_hotkeys(app: &App) {
             return;
         }
     }
-    log::error!("no safe global shortcuts could be registered; use the tray icon to open Clipdeck");
+    log::error!("no safe global shortcuts could be registered; use the tray icon to open Clipmo");
 }
 
 pub fn install_clipboard_listener(app: &App) -> Result<()> {
@@ -1161,7 +1161,7 @@ pub fn show_settings_window(app: &AppHandle) -> std::result::Result<(), String> 
     }
     let window =
         WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-            .title("Clipdeck settings")
+            .title("Clipmo settings")
             .inner_size(800.0, 680.0)
             .min_inner_size(680.0, 560.0)
             .resizable(true)

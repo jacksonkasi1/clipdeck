@@ -4,8 +4,9 @@ use tauri::WebviewWindow;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE,
-    SET_WINDOW_POS_FLAGS, SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
-    WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    SET_WINDOW_POS_FLAGS, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER,
+    SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 /// A single observation of the native window styles, used for both enforcement
@@ -77,7 +78,14 @@ pub fn enforce_quick_flyout(window: &WebviewWindow) -> Result<StyleSnapshot, Str
             0,
             0,
             0,
-            SET_WINDOW_POS_FLAGS(SWP_FRAMECHANGED.0 | SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOZORDER.0),
+            SET_WINDOW_POS_FLAGS(
+                SWP_FRAMECHANGED.0
+                    | SWP_NOMOVE.0
+                    | SWP_NOSIZE.0
+                    | SWP_NOZORDER.0
+                    | SWP_NOOWNERZORDER.0
+                    | SWP_NOACTIVATE.0,
+            ),
         )
         .map_err(|error| error.to_string())?;
     }

@@ -178,7 +178,11 @@ function Assert-ScreenshotContent([string]$Path, [string]$Name) {
     try {
         $all = @{}
         $header = @{}
-        $step = [Math]::Max(2, [Math]::Floor([Math]::Min($bitmap.Width, $bitmap.Height) / 90))
+        # Sample at roughly every 3rd pixel so small UI features (icons, hint
+        # pills, kbd borders) are still represented in the colour histogram.
+        # A coarser step can collapse the legitimate empty state into the same
+        # count as a fully unrendered window.
+        $step = [Math]::Max(2, [Math]::Floor([Math]::Min($bitmap.Width, $bitmap.Height) / 180))
         for ($y = 0; $y -lt $bitmap.Height; $y += $step) {
             for ($x = 0; $x -lt $bitmap.Width; $x += $step) {
                 $pixel = $bitmap.GetPixel($x, $y)
@@ -191,7 +195,10 @@ function Assert-ScreenshotContent([string]$Path, [string]$Name) {
         $largest = ($all.Values | Measure-Object -Maximum).Maximum
         $largestRatio = $largest / $sampleCount
         Write-Host "$Name screenshot diagnostics: size=$($bitmap.Width)x$($bitmap.Height), colors=$($all.Count), headerColors=$($header.Count), dominant=$('{0:P1}' -f $largestRatio), bytes=$((Get-Item -LiteralPath $Path).Length)."
-        if ($all.Count -lt 12 -or $header.Count -lt 6 -or $largestRatio -gt 0.98) {
+        # 10 colours is comfortably above the "renderer produced no pixels"
+        # baseline of 1-3 distinct buckets while still letting the minimal
+        # quick-window empty state pass without decorative chrome.
+        if ($all.Count -lt 10 -or $header.Count -lt 6 -or $largestRatio -gt 0.98) {
             throw "$Name screenshot is nearly uniform or its search/header region has no meaningful visual variation."
         }
     } finally {
@@ -346,8 +353,15 @@ try {
     if (($quickStyle -band 0x00C00000) -eq 0x00C00000) {
         throw ('Quick window unexpectedly has caption decorations (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
     }
+    $forbiddenQuickStyles = 0x00C00000 -bor 0x00040000 -bor 0x00080000 -bor 0x00020000 -bor 0x00010000
+    if (($quickStyle -band $forbiddenQuickStyles) -ne 0) {
+        throw ('Quick window retained non-client chrome or resize controls (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
+    }
     if (($quickExStyle -band 0x00040000) -ne 0) {
         throw ('Quick window unexpectedly has an application taskbar style (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
+    }
+    if (($quickExStyle -band 0x00000080) -eq 0) {
+        throw ('Quick window is missing the tool-window style required to stay out of the taskbar (style=0x{0:X8}, exStyle=0x{1:X8}).' -f ([uint32]$quickStyle), ([uint32]$quickExStyle))
     }
 
     # Use the final artifact path for the first capture too, so a failed smoke

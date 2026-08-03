@@ -14,18 +14,16 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
+  padding: 0;
   overflow: hidden;
+  background: transparent;
 }
 
-/* html/body/#root must stay transparent on native-material windows. Painting a
-   translucent colour here, again on .app-frame, and again on each pane stacked
-   three sheets over the DWM backdrop and made Acrylic look almost opaque.
-   `--window` resolves to `transparent` under [data-backdrop=acrylic|mica] and
-   to a solid colour in the Solid/high-contrast fallback. */
+/* The webview host must never paint an outer surface. The application frame is
+   the only browser surface; DWM owns the quick flyout's outer clipping. */
 html {
   font-family: var(--font-ui);
   font-size: 14px;
-  background: var(--window);
   color: var(--text);
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -33,7 +31,6 @@ html {
 
 body,
 #root {
-  background: transparent;
   user-select: none;
 }
 

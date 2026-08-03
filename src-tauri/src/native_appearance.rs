@@ -126,6 +126,16 @@ fn apply_surface(window: &WebviewWindow, settings: &Settings, dark: bool) -> Bac
     let mode = crate::window::mode_for_label(window.label());
     let requested = material_for(mode, settings.backdrop);
     let effective = crate::win::backdrop::apply(window, requested, dark);
+    // Acrylic/theme/DPI changes can recreate the Win32 non-client frame. The
+    // quick flyout's native contract must be the final operation, otherwise a
+    // white DWM edge or taskbar application style can return after the initial
+    // warm-up enforcement in `show_ready_quick`.
+    #[cfg(windows)]
+    if mode == WindowMode::Quick {
+        if let Err(error) = crate::win::window_style::enforce_quick_flyout(window) {
+            log::warn!("could not restore quick-window contract after backdrop: {error}");
+        }
+    }
     let _ = window.emit("clipdeck:backdrop", effective);
     effective
 }

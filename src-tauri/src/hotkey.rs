@@ -156,7 +156,7 @@ impl HotkeyAction {
     pub fn label(self) -> &'static str {
         match self {
             HotkeyAction::QuickPalette => "Quick clipboard",
-            HotkeyAction::FullWindow => "Open full Clipdeck",
+            HotkeyAction::FullWindow => "Open full Clipmo",
         }
     }
 }
@@ -230,6 +230,6 @@ mod tests {
     #[test]
     fn names_the_offending_action_when_one_shortcut_is_invalid() {
         let error = validate_distinct("Ctrl+Shift+V", "Shift+V").unwrap_err();
-        assert!(error.to_string().contains("Open full Clipdeck"));
+        assert!(error.to_string().contains("Open full Clipmo"));
     }
 }

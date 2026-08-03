@@ -114,7 +114,7 @@ pub fn prepare_root(root: &Path) -> Result<()> {
             .any(|folder| root.join(folder).exists());
         if collides_with_existing_folder && !has_legacy_database {
             return Err(Error::Other(
-                "storage folder already contains reserved Clipdeck directories".into(),
+                "storage folder already contains reserved Clipmo directories".into(),
             ));
         }
         fs::write(&marker, b"Clipdeck managed storage\n")?;
@@ -355,7 +355,7 @@ pub fn copy_managed_storage(old_root: &Path, new_root: &Path) -> Result<()> {
             let destination = new_root.join(folder);
             if fs::read_dir(&destination)?.next().transpose()?.is_some() {
                 return Err(Error::Other(format!(
-                    "new storage folder already contains Clipdeck {folder} data"
+                    "new storage folder already contains Clipmo {folder} data"
                 )));
             }
         }
@@ -395,7 +395,7 @@ pub fn validate_empty_migration_target(root: &Path) -> Result<()> {
             .any(|folder| root.join(folder).exists());
         if reserved {
             return Err(Error::Other(
-                "storage folder contains reserved Clipdeck directories".into(),
+                "storage folder contains reserved Clipmo directories".into(),
             ));
         }
         return Ok(());
@@ -408,7 +408,7 @@ pub fn validate_empty_migration_target(root: &Path) -> Result<()> {
         }
         if !path.is_dir() || fs::read_dir(&path)?.next().transpose()?.is_some() {
             return Err(Error::Other(format!(
-                "new storage folder already contains Clipdeck {folder} data"
+                "new storage folder already contains Clipmo {folder} data"
             )));
         }
     }

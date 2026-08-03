@@ -69,7 +69,14 @@ jobs:
           $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
           $tauriVersion = $tauri.version
           if ($tauri.productName -ne 'Clipmo') { throw "Expected Tauri productName Clipmo; got $($tauri.productName)" }
+          if ($tauri.identifier -ne 'app.clipdeck.desktop') { throw 'The legacy application identifier changed unexpectedly.' }
           if ($tauri.bundle.publisher -ne 'Jackson Kasi') { throw "Expected Tauri publisher Jackson Kasi; got $($tauri.bundle.publisher)" }
+          if ($tauri.bundle.copyright -notmatch 'Jackson Kasi') { throw 'Copyright owner must be Jackson Kasi.' }
+          $quick = $tauri.app.windows | Where-Object { $_.label -eq 'quick' }
+          if (-not $quick) { throw 'Missing quick window configuration.' }
+          if ($quick.decorations -ne $false -or $quick.shadow -ne $false -or $quick.resizable -ne $false -or $quick.alwaysOnTop -ne $true -or $quick.skipTaskbar -ne $true) {
+            throw 'Quick window configuration does not preserve the frameless, shadowless flyout contract.'
+          }
           $cargoVersion = (cargo metadata --format-version 1 --no-deps --locked --manifest-path src-tauri/Cargo.toml | ConvertFrom-Json).packages.Where({$_.name -eq 'clipdeck'}).version
           if (($packageVersion, $tauriVersion, $cargoVersion | Select-Object -Unique).Count -ne 1) {
             throw "Version mismatch: package=$packageVersion tauri=$tauriVersion cargo=$cargoVersion"

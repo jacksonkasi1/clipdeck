@@ -58,6 +58,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --no-audit
 
+      - name: Validate Windows packaging contract
+        shell: pwsh
+        run: |
+          foreach ($script in Get-ChildItem scripts/*.ps1) {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count) { throw "$($script.Name): $($errors -join '; ')" }
+          }
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $quick = $tauri.app.windows | Where-Object { $_.label -eq 'quick' }
+          if (-not $quick) { throw 'Missing quick window configuration.' }
+          if ($tauri.productName -ne 'Clipmo') { throw "Expected productName Clipmo; got $($tauri.productName)" }
+          if ($tauri.identifier -ne 'app.clipdeck.desktop') { throw 'The legacy application identifier changed unexpectedly.' }
+          if ($tauri.bundle.publisher -ne 'Jackson Kasi') { throw "Expected publisher Jackson Kasi; got $($tauri.bundle.publisher)" }
+          if ($tauri.bundle.copyright -notmatch 'Jackson Kasi') { throw 'Copyright owner must be Jackson Kasi.' }
+          if ($quick.decorations -ne $false -or $quick.shadow -ne $false -or $quick.resizable -ne $false -or $quick.alwaysOnTop -ne $true -or $quick.skipTaskbar -ne $true) {
+            throw 'Quick window configuration does not preserve the frameless, shadowless flyout contract.'
+          }
+
       - name: Test frontend
         run: npm test
 
