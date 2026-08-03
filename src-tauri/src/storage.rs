@@ -179,7 +179,7 @@ pub fn generate_image_thumbnail(
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
         .unwrap_or_else(|| "png".to_string());
-    let Ok(format) = image::ImageFormat::from_extension(&extension) else {
+    let Some(format) = image::ImageFormat::from_extension(&extension) else {
         return Ok(None);
     };
     let Ok(loaded) = image::load_from_memory_with_format(&bytes, format) else {
