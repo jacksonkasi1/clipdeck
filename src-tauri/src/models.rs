@@ -98,35 +98,6 @@ pub struct SourceApp {
     pub icon_path: Option<String>,
 }
 
-/// Rich preview metadata for a link-kind clipboard entry. Filled in by the
-/// `fetch_link_preview` command and cached on disk so repeat visits do not
-/// refetch the page. Every field is optional — the UI renders whatever the
-/// source page actually published and falls back to the bare URL otherwise.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct LinkPreview {
-    /// Final URL after redirects, when it differs from the input.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_url: Option<String>,
-    /// Page title (Open Graph → Twitter Card → `<title>`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// Description (Open Graph → Twitter Card → `<meta name="description">`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// Site name (`og:site_name`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub site_name: Option<String>,
-    /// Absolute path of the favicon PNG, if one was downloaded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub favicon_path: Option<String>,
-    /// Absolute path of the Open Graph / Twitter image PNG, if one was downloaded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_path: Option<String>,
-    /// Unix milliseconds at which the preview was generated.
-    pub fetched_at: i64,
-}
-
 /// Stable identity used by capture exclusions and application pickers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

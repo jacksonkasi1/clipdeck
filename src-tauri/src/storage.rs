@@ -119,7 +119,7 @@ pub fn prepare_root(root: &Path) -> Result<()> {
         }
         fs::write(&marker, b"Clipdeck managed storage\n")?;
     }
-    for folder in ["images", "thumbs", "files", "icons", "link-previews"] {
+    for folder in ["images", "thumbs", "files"] {
         fs::create_dir_all(root.join(folder))?;
     }
     Ok(())
@@ -137,24 +137,10 @@ pub fn file_root(root: &Path) -> PathBuf {
     root.join("files")
 }
 
-pub fn icon_root(root: &Path) -> PathBuf {
-    root.join("icons")
-}
-
-pub fn link_preview_root(root: &Path) -> PathBuf {
-    root.join("link-previews")
-}
-
 /// Directories exposed through Tauri's asset protocol. The storage marker and
 /// any neighboring application data remain outside the webview scope.
-pub fn managed_asset_roots(root: &Path) -> [PathBuf; 5] {
-    [
-        image_root(root),
-        thumb_root(root),
-        file_root(root),
-        icon_root(root),
-        link_preview_root(root),
-    ]
+pub fn managed_asset_roots(root: &Path) -> [PathBuf; 3] {
+    [image_root(root), thumb_root(root), file_root(root)]
 }
 
 /// Recognised raster image extensions. Anything else is treated as a generic
@@ -722,37 +708,5 @@ mod tests {
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(source_root).unwrap();
-    }
-
-    #[test]
-    fn managed_asset_roots_include_icon_and_link_preview_directories() {
-        let root = PathBuf::from(r"C:\Clipdeck\storage");
-        let roots = managed_asset_roots(&root);
-        let names: Vec<String> = roots
-            .iter()
-            .map(|p| {
-                p.file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string()
-            })
-            .collect();
-        assert!(names.contains(&"icons".to_string()));
-        assert!(names.contains(&"link-previews".to_string()));
-        assert!(names.contains(&"images".to_string()));
-        assert!(names.contains(&"thumbs".to_string()));
-        assert!(names.contains(&"files".to_string()));
-    }
-
-    #[test]
-    fn prepare_root_creates_icon_and_link_preview_subdirectories() {
-        let root = test_root("prepare-roots");
-        prepare_root(&root).unwrap();
-        assert!(root.join("icons").is_dir());
-        assert!(root.join("link-previews").is_dir());
-        assert!(root.join("images").is_dir());
-        assert!(root.join("thumbs").is_dir());
-        assert!(root.join("files").is_dir());
-        fs::remove_dir_all(root).unwrap();
     }
 }

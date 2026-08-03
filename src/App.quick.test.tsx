@@ -46,8 +46,6 @@ const apiMock = vi.hoisted(() => ({
   resolveApplicationIdentity: vi.fn(),
   extractApplicationIcon: vi.fn(),
   syncStateRaw: vi.fn(),
-  fetchLinkPreview: vi.fn(),
-  revealItem: vi.fn(),
 }));
 
 const listenerMap = vi.hoisted(() => new Map<string, Handler>());

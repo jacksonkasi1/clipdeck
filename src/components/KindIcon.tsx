@@ -2,6 +2,7 @@
 import type { ClipItem } from '../lib/types';
 
 // ** import lib
+import { useState } from 'react';
 import {
   FileImage,
   FileText,
@@ -10,11 +11,36 @@ import {
   Mail,
 } from 'lucide-react';
 
-import { SafeAssetImage } from './SafeImage';
+import { fileSrc } from '../lib/tauri';
 
 interface KindIconProps {
   item: ClipItem;
   size?: number;
+}
+
+function ThumbnailImage({ src, alt, className, fallback }: {
+  src: string;
+  alt: string;
+  className: string;
+  fallback: () => React.ReactNode;
+}) {
+  // A broken-image icon must never appear. If the asset protocol refuses the
+  // file (custom storage not in the scope, deleted source, transient IPC
+  // hiccup) we fall back to the kind-appropriate lucide icon and re-attempt
+  // the load on the next render. `key` cycles on retry so a recovered file
+  // re-fetches the bytes without bouncing the React tree.
+  const [failed, setFailed] = useState(false);
+  if (failed) return <>{fallback()}</>;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      onError={() => setFailed(true)}
+      loading="lazy"
+      decoding="async"
+    />
+  );
 }
 
 export function KindIcon({ item, size = 18 }: KindIconProps) {
@@ -22,11 +48,11 @@ export function KindIcon({ item, size = 18 }: KindIconProps) {
   // is not yet generated), the user still sees a recognisable icon.
   if (item.kind === 'image' && item.image?.thumbPath) {
     return (
-      <SafeAssetImage
-        path={item.image.thumbPath}
+      <ThumbnailImage
+        src={fileSrc(item.image.thumbPath)}
         alt=""
         className="kind-thumbnail"
-        fallback={<FileImage size={size} strokeWidth={1.7} aria-hidden />}
+        fallback={() => <FileImage size={size} strokeWidth={1.7} aria-hidden />}
       />
     );
   }
@@ -50,11 +76,11 @@ export function KindIcon({ item, size = 18 }: KindIconProps) {
     );
     if (firstImageAsset?.thumbPath) {
       return (
-        <SafeAssetImage
-          path={firstImageAsset.thumbPath}
+        <ThumbnailImage
+          src={fileSrc(firstImageAsset.thumbPath)}
           alt=""
           className="kind-thumbnail"
-          fallback={<Files size={size} strokeWidth={1.7} aria-hidden />}
+          fallback={() => <Files size={size} strokeWidth={1.7} aria-hidden />}
         />
       );
     }

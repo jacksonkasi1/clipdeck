@@ -42,10 +42,4 @@ impl From<String> for Error {
     }
 }
 
-impl From<url::ParseError> for Error {
-    fn from(value: url::ParseError) -> Self {
-        Self::Other(value.to_string())
-    }
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
