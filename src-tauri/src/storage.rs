@@ -666,7 +666,7 @@ mod tests {
                 image_path.to_string_lossy().into_owned(),
                 text_path.to_string_lossy().into_owned(),
             ],
-            64,
+            1024,
         )
         .unwrap();
 
