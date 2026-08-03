@@ -12,7 +12,7 @@
 
 #[cfg(not(test))]
 pub mod appearance;
-#[cfg(not(test))]
+#[cfg(windows)]
 pub mod apps;
 #[cfg(not(test))]
 pub mod backdrop;

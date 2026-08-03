@@ -199,7 +199,7 @@ struct FetchResponse {
 }
 
 fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
-    let deadline = Instant::now() + FETCH_TIMEOUT;
+    let _deadline = Instant::now() + FETCH_TIMEOUT;
     let mut child = std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -215,13 +215,6 @@ fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| Error::Other(format!("powershell launch failed: {error}")))?;
-    {
-        let stdout = child
-            .stdout
-            .as_mut()
-            .ok_or_else(|| Error::Other("powershell stdout was not captured".into()))?;
-        let _ = stdout.set_read_timeout(Some(remaining(deadline)));
-    }
     let output = child
         .wait_with_output()
         .map_err(|error| Error::Other(format!("powershell wait failed: {error}")))?;
@@ -322,6 +315,17 @@ fn parse_link_rel(head: &str, rel: &str) -> Option<String> {
     let position = lower.find(&needle_lo).or_else(|| lower.find(&needle_hi))?;
     let tag = tag_at(&head[position..])?;
     extract_attr(&tag, "href")
+}
+
+/// Walks the head section looking for any favicon-style `<link rel="…">`. The
+/// first match wins, in the order preferred by modern browsers.
+fn parse_link_icon(head: &str) -> Option<String> {
+    for rel in ["icon", "shortcut icon", "apple-touch-icon"] {
+        if let Some(value) = parse_link_rel(head, rel) {
+            return Some(value);
+        }
+    }
+    None
 }
 
 fn parse_html_title(head: &str) -> Option<String> {
@@ -440,25 +444,21 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
 }
 
 fn transcode_ico_to_png(bytes: &[u8]) -> Option<Vec<u8>> {
-    let cursor = std::io::Cursor::new(bytes);
-    let format = image::ImageFormat::Ico;
-    let reader = image::ImageReader::with_format(cursor, format);
-    let mut decoder = reader.into_decoder().ok()?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(1024);
-    limits.max_image_height = Some(1024);
-    decoder.set_limits(limits);
-    let frame = decoder.into_frames().next()?.ok()?;
-    let buffer = frame.into_buffer();
+    // The `image` crate auto-detects .ico (and every other supported raster
+    // format) from the bytes themselves, so we do not need to plumb a
+    // separate decoder pipeline. Failing to decode a malformed .ico
+    // returns None; the UI then falls back to the Globe glyph.
+    let decoded = image::load_from_memory_with_format(bytes, image::ImageFormat::Ico).ok()?;
+    let rgba = decoded.to_rgba8();
     let mut out = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut out);
     use image::ImageEncoder;
     encoder
         .write_image(
-            buffer.as_raw(),
-            buffer.width(),
-            buffer.height(),
-            buffer.color().into(),
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            image::ExtendedColorType::Rgba8,
         )
         .ok()?;
     Some(out)
