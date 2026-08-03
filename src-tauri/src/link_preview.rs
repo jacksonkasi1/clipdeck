@@ -21,7 +21,6 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -30,9 +29,6 @@ use crate::error::{Error, Result};
 use crate::models::LinkPreview;
 use crate::storage;
 
-/// Wall-time budget for the entire PowerShell fetch. The inner command has
-/// its own timeout; this is the hard ceiling for the call as a whole.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(8);
 /// Maximum body bytes accepted from the page. Anything beyond is discarded
 /// by the PowerShell script; the HTML we actually need lives in the first
 /// 256 KB anyway.
