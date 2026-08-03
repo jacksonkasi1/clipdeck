@@ -67,11 +67,6 @@ pub fn installed(refresh: bool) -> Vec<ApplicationInfo> {
     result
 }
 
-pub fn extract_icon(executable_path: &str) -> Option<String> {
-    let cache_root = default_icon_cache_root();
-    extract_icon_into(executable_path, &cache_root)
-}
-
 /// Extracts an executable's icon to a cache directory and returns the absolute
 /// PNG path. Used both by the application-picker (`ignoredApps`) and by the
 /// source-app attribution pipeline; the result is keyed by the canonical path
@@ -98,14 +93,6 @@ pub fn extract_icon_into(executable_path: &str, cache_root: &Path) -> Option<Str
         .status()
         .ok()?;
     (status.success() && icon_path.is_file()).then(|| icon_path.to_string_lossy().into_owned())
-}
-
-fn default_icon_cache_root() -> PathBuf {
-    std::env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("Clipdeck")
-        .join("icon-cache")
 }
 
 fn identity_for_path(path: &Path) -> IgnoredApp {

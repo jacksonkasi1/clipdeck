@@ -199,15 +199,6 @@ fn is_webview_process(path: &Path) -> bool {
         })
 }
 
-#[cfg(not(test))]
-pub(crate) fn is_current_process(path: &str) -> bool {
-    let Ok(current) = std::env::current_exe() else {
-        return false;
-    };
-    normalize_path(&current) == normalize_path(Path::new(path))
-}
-
-#[cfg(not(test))]
 pub(crate) fn normalize_path(path: &Path) -> String {
     std::fs::canonicalize(path)
         .unwrap_or_else(|_| path.to_path_buf())
@@ -215,6 +206,14 @@ pub(crate) fn normalize_path(path: &Path) -> String {
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase()
+}
+
+#[cfg(not(test))]
+pub(crate) fn is_current_process(path: &str) -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    normalize_path(&current) == normalize_path(Path::new(path))
 }
 
 fn display_name(path: &Path) -> String {
@@ -262,6 +261,7 @@ fn display_name(path: &Path) -> String {
 /// into the supplied cache directory (which must be inside the Tauri asset
 /// protocol scope) so the webview can render the result with `convertFileSrc`.
 /// Failures are silent — the row will simply fall back to the text glyph.
+#[cfg(not(test))]
 fn extract_icon(path: &Path, cache_root: &Path) -> Option<String> {
     let exe_str = path.as_os_str().to_str()?;
     super::apps::extract_icon_into(exe_str, cache_root)

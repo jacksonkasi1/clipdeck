@@ -21,7 +21,6 @@
 use std::io::Write;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
 
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -199,8 +198,7 @@ struct FetchResponse {
 }
 
 fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
-    let _deadline = Instant::now() + FETCH_TIMEOUT;
-    let mut child = std::process::Command::new("powershell.exe")
+    let child = std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -275,15 +273,6 @@ fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
     })
 }
 
-fn remaining(deadline: Instant) -> Duration {
-    let now = Instant::now();
-    if deadline <= now {
-        Duration::ZERO
-    } else {
-        deadline - now
-    }
-}
-
 fn is_html_content(content_type: &str) -> bool {
     content_type.contains("text/html") || content_type.contains("application/xhtml")
 }
@@ -319,6 +308,7 @@ fn parse_link_rel(head: &str, rel: &str) -> Option<String> {
 
 /// Walks the head section looking for any favicon-style `<link rel="…">`. The
 /// first match wins, in the order preferred by modern browsers.
+#[cfg(test)]
 fn parse_link_icon(head: &str) -> Option<String> {
     for rel in ["icon", "shortcut icon", "apple-touch-icon"] {
         if let Some(value) = parse_link_rel(head, rel) {
@@ -410,7 +400,7 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
     let digest = Sha256::digest(url.as_str().as_bytes());
     let ext = url
         .path_segments()
-        .and_then(|segments| segments.filter(|s| !s.is_empty()).last())
+        .and_then(|segments| segments.filter(|s| !s.is_empty()).next_back())
         .and_then(|name| name.rsplit_once('.'))
         .map(|(_, ext)| ext.to_ascii_lowercase())
         .filter(|ext| {
