@@ -56,6 +56,16 @@ export default function App() {
       setQuickEntering(false);
       window.setTimeout(() => setQuickEntering(true), 0);
       fallback = window.setTimeout(() => setQuickEntering(false), 180);
+      // Resync from SQLite on every open. The quick palette hides itself
+      // after each paste (Esc, focus loss, click on row), so a file/image
+      // copy that lands while the palette is hidden relies on this re-fetch
+      // to make the new row visible. The store's `historyGeneration`
+      // counter coalesces any overlapping refresh requests, so a rapid
+      // double-tap of the global shortcut still yields a single, current
+      // SQLite read.
+      void useStore.getState().refresh().catch((error: unknown) => {
+        console.error('Failed to resync quick clipboard on open', error);
+      });
       window.dispatchEvent(new CustomEvent('clipmo:focus-search'));
     };
     const unlisten = on<void>('clipdeck:quick-opened', replayOpen);
