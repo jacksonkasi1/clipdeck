@@ -668,7 +668,10 @@ mod tests {
         )
         .unwrap();
 
-        let image_asset = assets.iter().find(|a| a.original_path.contains(".png")).unwrap();
+        let image_asset = assets
+            .iter()
+            .find(|a| a.original_path.contains(".png"))
+            .unwrap();
         assert_eq!(image_asset.status, StoredFileStatus::Ready);
         assert!(
             image_asset.thumb_path.is_some(),
@@ -676,9 +679,15 @@ mod tests {
         );
         let thumb_path = image_asset.thumb_path.as_ref().unwrap();
         assert!(thumb_path.starts_with(root.to_string_lossy().as_ref()));
-        assert!(Path::new(thumb_path).is_file(), "thumbnail must exist on disk");
+        assert!(
+            Path::new(thumb_path).is_file(),
+            "thumbnail must exist on disk"
+        );
 
-        let text_asset = assets.iter().find(|a| a.original_path.contains(".txt")).unwrap();
+        let text_asset = assets
+            .iter()
+            .find(|a| a.original_path.contains(".txt"))
+            .unwrap();
         assert!(text_asset.thumb_path.is_none());
 
         // Invalid source must not blow up snapshot_files; the asset is still
