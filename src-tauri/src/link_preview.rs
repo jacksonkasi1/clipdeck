@@ -301,9 +301,7 @@ fn parse_meta(head: &str, attribute: &str, value: &str) -> Option<String> {
     let needle_lo = format!("{attribute}=\"{value}\"");
     let needle_hi = format!("{attribute}='{value}'");
     let lower = head.to_ascii_lowercase();
-    let position = lower
-        .find(&needle_lo)
-        .or_else(|| lower.find(&needle_hi))?;
+    let position = lower.find(&needle_lo).or_else(|| lower.find(&needle_hi))?;
     let tag = tag_at(&head[position..])?;
     extract_attr(&tag, "content")
 }
@@ -312,9 +310,7 @@ fn parse_link_rel(head: &str, rel: &str) -> Option<String> {
     let needle_lo = format!("rel=\"{rel}\"");
     let needle_hi = format!("rel='{rel}'");
     let lower = head.to_ascii_lowercase();
-    let position = lower
-        .find(&needle_lo)
-        .or_else(|| lower.find(&needle_hi))?;
+    let position = lower.find(&needle_lo).or_else(|| lower.find(&needle_hi))?;
     let tag = tag_at(&head[position..])?;
     extract_attr(&tag, "href")
 }
@@ -404,15 +400,32 @@ fn download_into(storage_root: &Path, url: &Url, label: &str) -> Result<Option<S
         .and_then(|segments| segments.filter(|s| !s.is_empty()).last())
         .and_then(|name| name.rsplit_once('.'))
         .map(|(_, ext)| ext.to_ascii_lowercase())
-        .filter(|ext| matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico"))
+        .filter(|ext| {
+            matches!(
+                ext.as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico"
+            )
+        })
         .unwrap_or_else(|| "png".to_string());
     let path = if ext == "ico" {
         match transcode_ico_to_png(&response.body) {
-            Some(transcoded) => write_asset(storage_root, label, &format!("{digest:x}"), "png", &transcoded)?,
+            Some(transcoded) => write_asset(
+                storage_root,
+                label,
+                &format!("{digest:x}"),
+                "png",
+                &transcoded,
+            )?,
             None => return Ok(None),
         }
     } else {
-        write_asset(storage_root, label, &format!("{digest:x}"), &ext, &response.body)?
+        write_asset(
+            storage_root,
+            label,
+            &format!("{digest:x}"),
+            &ext,
+            &response.body,
+        )?
     };
     Ok(Some(path))
 }

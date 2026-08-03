@@ -730,7 +730,12 @@ mod tests {
         let roots = managed_asset_roots(&root);
         let names: Vec<String> = roots
             .iter()
-            .map(|p| p.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string())
+            .map(|p| {
+                p.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
             .collect();
         assert!(names.contains(&"icons".to_string()));
         assert!(names.contains(&"link-previews".to_string()));
