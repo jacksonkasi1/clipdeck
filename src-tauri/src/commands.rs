@@ -357,7 +357,10 @@ pub async fn extract_application_icon(
     executable_path: String,
 ) -> Result<Option<String>> {
     let icon_root = crate::storage::icon_root(&state.storage_root.read());
-    Ok(crate::win::apps::extract_icon_into(&executable_path, &icon_root))
+    Ok(crate::win::apps::extract_icon_into(
+        &executable_path,
+        &icon_root,
+    ))
 }
 
 #[tauri::command]

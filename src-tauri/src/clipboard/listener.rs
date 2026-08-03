@@ -68,10 +68,7 @@ pub struct ClipEvent {
 /// `icon_root` is the cache directory source-app icons are written into; it
 /// must be inside the Tauri asset-protocol scope so the webview can render
 /// the resulting PNG via `convertFileSrc`.
-pub fn start_listener(
-    sink: Arc<dyn CaptureSink>,
-    icon_root: PathBuf,
-) -> std::io::Result<()> {
+pub fn start_listener(sink: Arc<dyn CaptureSink>, icon_root: PathBuf) -> std::io::Result<()> {
     const EVENT_QUEUE_CAPACITY: usize = 32;
     let (event_tx, event_rx) = mpsc::sync_channel::<ClipEvent>(EVENT_QUEUE_CAPACITY);
     std::thread::Builder::new()
@@ -171,7 +168,13 @@ fn run(
         // Stash the sink on the window so the wndproc can recover it via
         // GetWindowLongPtrW. We only have one listener, so a thread-local
         // would also work; using the HWND keeps the API symmetrical.
-        set_user_data(hwnd, ListenerData { event_tx, icon_root });
+        set_user_data(
+            hwnd,
+            ListenerData {
+                event_tx,
+                icon_root,
+            },
+        );
         ready_tx
             .send(Ok(()))
             .map_err(|_| "listener readiness receiver disconnected")?;

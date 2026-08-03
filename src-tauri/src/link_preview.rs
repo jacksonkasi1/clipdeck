@@ -148,7 +148,9 @@ pub fn fetch(storage_root: &Path, input: &str) -> Result<Option<LinkPreview>> {
         .as_deref()
         .and_then(|raw| resolve_url(&final_url, raw))
     {
-        Some(resolved) => download_into(storage_root, &resolved, "image").ok().flatten(),
+        Some(resolved) => download_into(storage_root, &resolved, "image")
+            .ok()
+            .flatten(),
         None => None,
     };
     let favicon_path = match icon_url
@@ -214,9 +216,10 @@ fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
         .spawn()
         .map_err(|error| Error::Other(format!("powershell launch failed: {error}")))?;
     {
-        let stdout = child.stdout.as_mut().ok_or_else(|| {
-            Error::Other("powershell stdout was not captured".into())
-        })?;
+        let stdout = child
+            .stdout
+            .as_mut()
+            .ok_or_else(|| Error::Other("powershell stdout was not captured".into()))?;
         let _ = stdout.set_read_timeout(Some(remaining(deadline)));
     }
     let output = child
@@ -233,7 +236,10 @@ fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let value: serde_json::Value = serde_json::from_str(stdout.trim())
         .map_err(|error| Error::Other(format!("powershell JSON parse failed: {error}")))?;
-    let status = value.get("Status").and_then(serde_json::Value::as_u64).unwrap_or(0) as u16;
+    let status = value
+        .get("Status")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0) as u16;
     let final_url = value
         .get("FinalUrl")
         .and_then(serde_json::Value::as_str)
@@ -244,7 +250,10 @@ fn powershell_fetch(url: &Url) -> Result<FetchResponse> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_string();
-    let body_b64 = value.get("Body").and_then(serde_json::Value::as_str).unwrap_or("");
+    let body_b64 = value
+        .get("Body")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
     if body_b64.is_empty() {
         return Ok(FetchResponse {
             status,
