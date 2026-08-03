@@ -92,6 +92,17 @@ pub fn quick_is_expanded(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
+/// Snapshot of the quick palette's native readiness state. Both the
+/// `frontend_ready` and `data_hydrated` flags must be true before the window
+/// is allowed to reveal itself.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuickReadinessState {
+    pub frontend_ready: bool,
+    pub data_hydrated: bool,
+    pub open_pending: bool,
+}
+
 /// Shows the quick palette on the monitor the user is working on.
 ///
 /// The previous foreground window is captured *before* the palette is shown so
@@ -112,6 +123,13 @@ pub fn show_quick(app: &AppHandle) {
         .load(std::sync::atomic::Ordering::Acquire)
     {
         log::info!("quick open queued while frontend loads");
+        return;
+    }
+    if !state
+        .quick_data_hydrated
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        log::info!("quick open queued while history hydrates");
         return;
     }
     if state
@@ -135,6 +153,16 @@ pub fn frontend_ready(app: &AppHandle, label: &str) {
         .quick_frontend_ready
         .store(true, std::sync::atomic::Ordering::Release);
     log::info!("quick frontend ready");
+    if !state
+        .quick_data_hydrated
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        // The first SQLite read may not have landed yet (bootStore is awaited
+        // asynchronously from the React mount). The pending open will be
+        // honoured when `signal_quick_data_hydrated` arrives.
+        log::info!("quick frontend ready; waiting for data hydration");
+        return;
+    }
     if state
         .quick_open_pending
         .swap(false, std::sync::atomic::Ordering::AcqRel)

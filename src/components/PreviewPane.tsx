@@ -33,6 +33,32 @@ import { getShortcutLabel } from '../lib/platform';
 import { normaliseUrl, tryParseScheme } from '../lib/url';
 import { toast } from '../lib/toast';
 
+/** Loads an image and falls back to a thumbnail-friendly placeholder on error. */
+function SafeImage({
+  src,
+  alt,
+  className,
+  fallback,
+}: {
+  src: string;
+  alt: string;
+  className?: string;
+  fallback: React.ReactNode;
+}) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <>{fallback}</>;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      onError={() => setFailed(true)}
+      loading="lazy"
+      decoding="async"
+    />
+  );
+}
+
 export function PreviewPane() {
   const selectedId = useStore((s) => s.selectedId);
   const items = useStore((s) => s.items);
@@ -185,7 +211,17 @@ function ImagePreview({ item }: { item: ClipItem }) {
   return (
     <div className="preview-scroll preview-image-wrap">
       <div className="image-canvas">
-        <img className="preview-image" src={fileSrc(item.image.path)} alt={item.preview} />
+        <SafeImage
+          src={fileSrc(item.image.path)}
+          alt={item.preview}
+          className="preview-image"
+          fallback={
+            <div className="preview-fallback">
+              <FileImage size={48} strokeWidth={1.4} aria-hidden />
+              <span>The image preview is unavailable.</span>
+            </div>
+          }
+        />
       </div>
       <div className="preview-caption">
         <FileImage size={16} aria-hidden />
@@ -205,15 +241,29 @@ function FilePreview({ item }: { item: ClipItem }) {
         isDirectory: false,
         status: 'skipped' as const,
         message: 'Original path only',
+        thumbPath: null,
       }));
   return (
     <div className="preview-scroll file-preview">
       {assets.map((asset) => (
         <article className="file-card" key={asset.originalPath}>
           <span className="file-card-icon">
-            {asset.isDirectory
-              ? <Folder size={28} strokeWidth={1.5} aria-hidden />
-              : <File size={28} strokeWidth={1.5} aria-hidden />}
+            {asset.thumbPath
+              ? (
+                <SafeImage
+                  src={fileSrc(asset.thumbPath)}
+                  alt={baseName(asset.originalPath)}
+                  className="file-card-thumbnail"
+                  fallback={
+                    asset.isDirectory
+                      ? <Folder size={28} strokeWidth={1.5} aria-hidden />
+                      : <File size={28} strokeWidth={1.5} aria-hidden />
+                  }
+                />
+              )
+              : asset.isDirectory
+                ? <Folder size={28} strokeWidth={1.5} aria-hidden />
+                : <File size={28} strokeWidth={1.5} aria-hidden />}
           </span>
           <div className="file-card-copy">
             <strong>{baseName(asset.originalPath)}</strong>

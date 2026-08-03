@@ -51,6 +51,13 @@ pub struct AppState {
     pub quick_pinned: std::sync::atomic::AtomicBool,
     /// Set only after the quick React shell, search field, and listeners exist.
     pub quick_frontend_ready: std::sync::atomic::AtomicBool,
+    /// Set only after the quick webview's first SQLite read lands. The native
+    /// show flow must gate the reveal on both `quick_frontend_ready` and this
+    /// flag so the user never sees a Quick window that has not yet loaded its
+    /// current history. A subsequent `clip-updated` is allowed to flip this off
+    /// briefly so a re-fetch can re-arm the contract without leaving the
+    /// window blank.
+    pub quick_data_hydrated: std::sync::atomic::AtomicBool,
     /// Coalesces any number of startup hotkeys into one reveal after readiness.
     pub quick_open_pending: std::sync::atomic::AtomicBool,
 }
@@ -114,6 +121,8 @@ pub fn run() {
             commands::hide_window,
             commands::window_mode,
             commands::signal_frontend_ready,
+            commands::signal_quick_data_hydrated,
+            commands::quick_readiness_state,
             commands::signal_quick_search_focused,
             commands::show_quick_palette,
             commands::hide_quick_palette,
@@ -223,6 +232,7 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         foreground: parking_lot::Mutex::new(0),
         quick_pinned: std::sync::atomic::AtomicBool::new(false),
         quick_frontend_ready: std::sync::atomic::AtomicBool::new(false),
+        quick_data_hydrated: std::sync::atomic::AtomicBool::new(false),
         quick_open_pending: std::sync::atomic::AtomicBool::new(false),
     };
     app.manage(state);

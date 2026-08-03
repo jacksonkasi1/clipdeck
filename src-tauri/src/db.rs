@@ -702,6 +702,9 @@ CREATE TABLE IF NOT EXISTS settings (
                 if let Some(stored_path) = asset.stored_path.as_deref() {
                     asset.stored_path = Some(migrated_path(stored_path, old_root, new_root));
                 }
+                if let Some(thumb_path) = asset.thumb_path.as_deref() {
+                    asset.thumb_path = Some(migrated_path(thumb_path, old_root, new_root));
+                }
             }
             let assets_json = if assets.is_empty() {
                 None

@@ -30,6 +30,13 @@ export interface StoredFile {
   isDirectory: boolean;
   status: StoredFileStatus;
   message: string | null;
+  /**
+   * Absolute path to a downscaled PNG preview of the file. Only populated
+   * when the original file is a raster image and the managed snapshot worker
+   * was able to decode it. Used by the Quick View row and the details pane
+   * to render a real thumbnail instead of a generic icon.
+   */
+  thumbPath?: string | null;
 }
 
 export interface SourceApp {
@@ -167,4 +174,15 @@ export interface Settings {
 export interface SystemAppearance {
   accent: string;
   dark: boolean;
+}
+
+/**
+ * Snapshot of the Quick palette's native readiness state. Both flags must
+ * be true before the Quick View is allowed to reveal itself, so the user
+ * never sees an empty list while the first SQLite read is still in flight.
+ */
+export interface QuickReadinessState {
+  frontendReady: boolean;
+  dataHydrated: boolean;
+  openPending: boolean;
 }

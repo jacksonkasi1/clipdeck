@@ -11,6 +11,8 @@ const apiMock = vi.hoisted(() => ({
   syncState: vi.fn(),
   syncNativeAppearance: vi.fn(),
   signalFrontendReady: vi.fn(),
+  signalQuickDataHydrated: vi.fn(),
+  quickReadinessState: vi.fn(),
   signalQuickSearchFocused: vi.fn(),
   saveSettings: vi.fn(),
   setPreviewVisible: vi.fn(),
@@ -97,6 +99,7 @@ const fileItem: ClipItem = {
       isDirectory: false,
       status: 'pending',
       message: null,
+      thumbPath: null,
     },
   ],
   sizeBytes: 0,
@@ -149,6 +152,12 @@ beforeEach(() => {
   apiMock.syncState.mockReset().mockResolvedValue(null);
   apiMock.syncNativeAppearance.mockReset().mockResolvedValue({ accent: '#000', dark: false });
   apiMock.signalFrontendReady.mockReset().mockResolvedValue(undefined);
+  apiMock.signalQuickDataHydrated.mockReset().mockResolvedValue(undefined);
+  apiMock.quickReadinessState.mockReset().mockResolvedValue({
+    frontendReady: true,
+    dataHydrated: true,
+    openPending: false,
+  });
   apiMock.signalQuickSearchFocused.mockReset().mockResolvedValue(undefined);
   apiMock.saveSettings.mockReset().mockImplementation(async (next: typeof baseSettings) => next);
   apiMock.setPreviewVisible.mockReset().mockResolvedValue(true);
@@ -242,5 +251,33 @@ describe('App quick-view clipboard sync', () => {
     });
 
     expect(useStore.getState().items[0]?.kind).toBe('files');
+  });
+
+  it('signals native hydration after the first SQLite read lands', async () => {
+    render(<App />);
+    await bootStore();
+    await waitFor(() => {
+      expect(apiMock.signalQuickDataHydrated).toHaveBeenCalledWith(true);
+    });
+    expect(useStore.getState().hydrated).toBe(true);
+  });
+
+  it('recovers missed clip-updated events fired while listeners were not yet installed', async () => {
+    // The user can copy a clipboard item in the very first milliseconds after
+    // launch, before React or `bootStore` have installed the listeners. The
+    // contract must guarantee that the Quick View still catches up via the
+    // initial `refresh()` once it does run.
+    apiMock.listItems.mockReset();
+    const early = { ...fileItem, id: 123, preview: 'early' };
+    const later = { ...fileItem, id: 456, preview: 'later' };
+    apiMock.listItems.mockResolvedValueOnce([early, later]);
+    apiMock.counts.mockReset().mockResolvedValue({ ...baseCounts, total: 2, files: 2 });
+    render(<App />);
+    await bootStore();
+    await waitFor(() => {
+      const ids = useStore.getState().items.map((item) => item.id);
+      expect(ids).toContain(123);
+      expect(ids).toContain(456);
+    });
   });
 });

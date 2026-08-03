@@ -143,6 +143,53 @@ pub fn managed_asset_roots(root: &Path) -> [PathBuf; 3] {
     [image_root(root), thumb_root(root), file_root(root)]
 }
 
+/// Recognised raster image extensions. Anything else is treated as a generic
+/// file and never receives a generated thumbnail.
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp"];
+
+/// True when the path's extension is a supported raster image format.
+pub fn is_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| IMAGE_EXTENSIONS.iter().any(|known| known.eq_ignore_ascii_case(&ext)))
+        .unwrap_or(false)
+}
+
+/// Generates a downscaled PNG preview for an image file. Returns `None` for
+/// non-image files, unreadable sources, or decoders that fail. The thumbnail
+/// is written under `thumb_root` keyed by the source's content hash so the
+/// file can be deduplicated across captures.
+pub fn generate_image_thumbnail(
+    storage_root: &Path,
+    source: &Path,
+    hash: &str,
+) -> Result<Option<PathBuf>> {
+    if !is_image_path(source) {
+        return Ok(None);
+    }
+    let Ok(bytes) = fs::read(source) else {
+        return Ok(None);
+    };
+    let extension = source
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .unwrap_or_else(|| "png".to_string());
+    let Ok(format) = image::ImageFormat::from_extension(&extension) else {
+        return Ok(None);
+    };
+    let Ok(loaded) = image::load_from_memory_with_format(&bytes, format) else {
+        return Ok(None);
+    };
+    let thumbnail = loaded.thumbnail(256, 256);
+    let thumb_dir = thumb_root(storage_root);
+    prepare_root(storage_root)?;
+    fs::create_dir_all(&thumb_dir)?;
+    let thumb_path = thumb_dir.join(format!("{hash}.png"));
+    thumbnail.save(&thumb_path)?;
+    Ok(Some(thumb_path))
+}
+
 /// Copies clipboard file/folder inputs into one hash-addressed snapshot group.
 /// Each item reports its own result so one inaccessible file does not discard
 /// the rest of the clipboard entry.
@@ -211,6 +258,18 @@ pub fn snapshot_files(
         match copy_result {
             Ok(()) => {
                 used_bytes = used_bytes.saturating_add(item_size);
+                // Image files get a managed thumbnail so the Quick View row and
+                // the details preview can show a preview without re-decoding the
+                // original every render. Generation failures are non-fatal:
+                // the asset is still Ready, the thumbnail simply stays `None`.
+                let thumb_path = if !is_directory {
+                    match generate_image_thumbnail(storage_root, &source, hash) {
+                        Ok(Some(path)) => Some(path.to_string_lossy().into_owned()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 assets.push(StoredFile {
                     original_path: original.clone(),
                     stored_path: Some(destination.to_string_lossy().into_owned()),
@@ -218,6 +277,7 @@ pub fn snapshot_files(
                     is_directory,
                     status: StoredFileStatus::Ready,
                     message: None,
+                    thumb_path,
                 });
             }
             Err(error) => {
@@ -567,5 +627,71 @@ mod tests {
 
         fs::remove_dir_all(old_root).unwrap();
         fs::remove_dir_all(new_root).unwrap();
+    }
+
+    #[test]
+    fn is_image_path_recognises_supported_extensions_case_insensitively() {
+        assert!(is_image_path(Path::new("C:/photos/og_images.png")));
+        assert!(is_image_path(Path::new("C:/photos/screenshot.JPG")));
+        assert!(is_image_path(Path::new("image.WebP")));
+        assert!(is_image_path(Path::new("diagram.svg")) == false);
+        assert!(is_image_path(Path::new("notes.txt")) == false);
+        assert!(is_image_path(Path::new("no-extension")) == false);
+    }
+
+    #[test]
+    fn image_thumbnail_is_generated_for_image_files_only() {
+        let root = test_root("thumbnail-root");
+        let source_root = test_root("thumbnail-source");
+        fs::create_dir_all(&source_root).unwrap();
+
+        // Create a tiny 2x2 PNG so the decoder has something real to work with.
+        let image = image::RgbaImage::from_fn(2, 2, |_x, _y| image::Rgba([255, 0, 0, 255]));
+        let image_path = source_root.join("og_images.png");
+        image.save(&image_path).unwrap();
+        let text_path = source_root.join("notes.txt");
+        fs::write(&text_path, b"plain text").unwrap();
+
+        let hash = "00112233445566778899aabbccddeeff";
+        let assets = snapshot_files(
+            &root,
+            hash,
+            &[
+                image_path.to_string_lossy().into_owned(),
+                text_path.to_string_lossy().into_owned(),
+            ],
+            64,
+        )
+        .unwrap();
+
+        let image_asset = assets.iter().find(|a| a.original_path.contains(".png")).unwrap();
+        assert_eq!(image_asset.status, StoredFileStatus::Ready);
+        assert!(
+            image_asset.thumb_path.is_some(),
+            "image files should produce a managed thumbnail"
+        );
+        let thumb_path = image_asset.thumb_path.as_ref().unwrap();
+        assert!(thumb_path.starts_with(root.to_string_lossy().as_ref()));
+        assert!(Path::new(thumb_path).is_file(), "thumbnail must exist on disk");
+
+        let text_asset = assets.iter().find(|a| a.original_path.contains(".txt")).unwrap();
+        assert!(text_asset.thumb_path.is_none());
+
+        // Invalid source must not blow up snapshot_files; the asset is still
+        // reported as Ready and only the thumbnail is missing.
+        let missing_path = source_root.join("missing.png");
+        let assets_missing = snapshot_files(
+            &root,
+            "ffeeddccbbaa99887766554433221100",
+            &[missing_path.to_string_lossy().into_owned()],
+            64,
+        )
+        .unwrap();
+        let missing = &assets_missing[0];
+        assert_eq!(missing.status, StoredFileStatus::Failed);
+        assert!(missing.thumb_path.is_none());
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(source_root).unwrap();
     }
 }

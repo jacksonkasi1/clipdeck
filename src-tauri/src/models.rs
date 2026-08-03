@@ -80,6 +80,10 @@ pub struct StoredFile {
     pub is_directory: bool,
     pub status: StoredFileStatus,
     pub message: Option<String>,
+    /// Absolute path to a generated thumbnail when the original is an image.
+    /// `None` for non-image files or when generation has not yet succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thumb_path: Option<String>,
 }
 
 /// The application that owned the clipboard when an entry was captured.
