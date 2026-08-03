@@ -154,7 +154,7 @@ pub fn is_image_path(path: &Path) -> bool {
         .map(|ext| {
             IMAGE_EXTENSIONS
                 .iter()
-                .any(|known| known.eq_ignore_ascii_case(&ext))
+                .any(|known| known.eq_ignore_ascii_case(ext))
         })
         .unwrap_or(false)
 }
@@ -640,9 +640,9 @@ mod tests {
         assert!(is_image_path(Path::new("C:/photos/og_images.png")));
         assert!(is_image_path(Path::new("C:/photos/screenshot.JPG")));
         assert!(is_image_path(Path::new("image.WebP")));
-        assert!(is_image_path(Path::new("diagram.svg")) == false);
-        assert!(is_image_path(Path::new("notes.txt")) == false);
-        assert!(is_image_path(Path::new("no-extension")) == false);
+        assert!(!is_image_path(Path::new("diagram.svg")));
+        assert!(!is_image_path(Path::new("notes.txt")));
+        assert!(!is_image_path(Path::new("no-extension")));
     }
 
     #[test]
