@@ -151,7 +151,11 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "bmp", "webp"];
 pub fn is_image_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| IMAGE_EXTENSIONS.iter().any(|known| known.eq_ignore_ascii_case(&ext)))
+        .map(|ext| {
+            IMAGE_EXTENSIONS
+                .iter()
+                .any(|known| known.eq_ignore_ascii_case(&ext))
+        })
         .unwrap_or(false)
 }
 

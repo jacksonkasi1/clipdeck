@@ -508,9 +508,7 @@ pub async fn signal_quick_data_hydrated(
 /// its loading chrome should still be on screen and to log any
 /// mismatch between the React and native views of the world.
 #[tauri::command]
-pub async fn quick_readiness_state(
-    app: AppHandle,
-) -> Result<crate::window::QuickReadinessState> {
+pub async fn quick_readiness_state(app: AppHandle) -> Result<crate::window::QuickReadinessState> {
     let state = app
         .try_state::<AppState>()
         .ok_or_else(|| Error::Other("AppState is missing".into()))?;
