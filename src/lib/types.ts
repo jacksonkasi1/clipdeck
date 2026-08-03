@@ -45,6 +45,16 @@ export interface SourceApp {
   iconPath: string | null;
 }
 
+export interface LinkPreview {
+  resolvedUrl?: string | null;
+  title?: string | null;
+  description?: string | null;
+  siteName?: string | null;
+  faviconPath?: string | null;
+  imagePath?: string | null;
+  fetchedAt: number;
+}
+
 export type PlatformKind = 'windows' | 'macos' | 'linux' | 'android' | 'ios' | 'unknown';
 
 export type SyncStatus = 'local' | 'synced' | 'pending' | 'offline';

@@ -36,9 +36,10 @@ import {
 } from 'lucide-react';
 
 import { DeviceBadge } from './components/DeviceBadge';
+import { SafeAssetImage } from './components/SafeImage';
 import { SyncPreferencesPanel } from './components/SyncPreferencesPanel';
 import { useStore } from './lib/store';
-import { api, fileSrc } from './lib/tauri';
+import { api } from './lib/tauri';
 import { getPlatform } from './lib/platform';
 import { APP_SHORTCUTS, shortcutKeys } from './lib/shortcuts';
 import { applyTheme } from './lib/theme';
@@ -988,7 +989,18 @@ function ApplicationIcon({ app }: { app: Pick<IgnoredApp, 'displayName' | 'iconP
     }).catch(() => { iconCache.set(app.executablePath, null); });
     return () => { active = false; };
   }, [app.executablePath, app.iconPath]);
-  return <span className="application-icon">{icon ? <img src={fileSrc(icon)} alt="" /> : <AppWindow size={17} aria-hidden />}<span className="sr-only">{app.displayName}</span></span>;
+  return (
+    <span className="application-icon">
+      <SafeAssetImage
+        path={icon}
+        alt=""
+        className="application-icon-image"
+        fallback={<AppWindow size={17} aria-hidden />}
+        loading="eager"
+      />
+      <span className="sr-only">{app.displayName}</span>
+    </span>
+  );
 }
 
 function identityKey(app: Pick<IgnoredApp, 'id' | 'packageFamilyName' | 'appUserModelId' | 'executablePath'>): string {

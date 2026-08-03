@@ -7,6 +7,7 @@ import type {
   IgnoredApp,
   FlavorBundle,
   ItemKind,
+  LinkPreview,
   ListQuery,
   PasteFlavor,
   QuickReadinessState,
@@ -60,6 +61,8 @@ export const api = {
   syncNativeAppearance: () => invoke<SystemAppearance>('sync_native_appearance'),
   openSettingsWindow: openClipmoSettings,
   openExternalUrl: (url: string) => invoke<void>('open_external_url', { url }),
+  fetchLinkPreview: (url: string) =>
+    invoke<LinkPreview | null>('fetch_link_preview', { url }),
   openStorageFolder: () => invoke<void>('open_storage_folder'),
   hideWindow: () => invoke<void>('hide_window'),
   windowMode: () => invoke<'quick' | 'full' | 'settings'>('window_mode'),

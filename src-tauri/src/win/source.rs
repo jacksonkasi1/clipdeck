@@ -20,7 +20,6 @@ use windows::Win32::System::DataExchange::GetClipboardOwner;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::ExtractIconW;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, GA_ROOTOWNER,
 };
@@ -71,7 +70,10 @@ pub fn foreground_paste_target() -> Option<isize> {
 /// Resolves the source application for a clipboard event.
 ///
 /// `hint` is an optional foreground window captured before the popup appeared.
-pub fn resolve(hint: Option<isize>) -> Option<SourceApp> {
+/// `icon_root` is the cache directory the source icon (if extractable) is
+/// written into; it must be inside the Tauri asset-protocol scope so the
+/// webview can render the resulting file via `convertFileSrc`.
+pub fn resolve(hint: Option<isize>, icon_root: &Path) -> Option<SourceApp> {
     let owner = get_clipboard_owner_hwnd();
     let owner_pid = pid_for_hwnd(owner);
     let root_owner = root_owner(owner);
@@ -82,7 +84,7 @@ pub fn resolve(hint: Option<isize>) -> Option<SourceApp> {
     ];
 
     for pid in candidates.into_iter().flatten() {
-        if let Some(app) = from_pid(map_webview_to_host(pid)) {
+        if let Some(app) = from_pid(map_webview_to_host(pid), icon_root) {
             #[cfg(debug_assertions)]
             log::debug!(
                 "source_resolution resolved=true pid={} executable={}",
@@ -129,10 +131,10 @@ fn root_owner(hwnd: isize) -> isize {
     }
 }
 
-fn from_pid(pid: u32) -> Option<SourceApp> {
+fn from_pid(pid: u32, icon_root: &Path) -> Option<SourceApp> {
     let path = process_path(pid)?;
     let name = display_name(&path);
-    let icon_path = extract_icon(&path);
+    let icon_path = extract_icon(&path, icon_root);
     Some(SourceApp {
         name,
         exe_path: path.to_string_lossy().to_string(),
@@ -197,15 +199,6 @@ fn is_webview_process(path: &Path) -> bool {
         })
 }
 
-#[cfg(not(test))]
-pub(crate) fn is_current_process(path: &str) -> bool {
-    let Ok(current) = std::env::current_exe() else {
-        return false;
-    };
-    normalize_path(&current) == normalize_path(Path::new(path))
-}
-
-#[cfg(not(test))]
 pub(crate) fn normalize_path(path: &Path) -> String {
     std::fs::canonicalize(path)
         .unwrap_or_else(|_| path.to_path_buf())
@@ -213,6 +206,14 @@ pub(crate) fn normalize_path(path: &Path) -> String {
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase()
+}
+
+#[cfg(not(test))]
+pub(crate) fn is_current_process(path: &str) -> bool {
+    let Ok(current) = std::env::current_exe() else {
+        return false;
+    };
+    normalize_path(&current) == normalize_path(Path::new(path))
 }
 
 fn display_name(path: &Path) -> String {
@@ -257,19 +258,11 @@ fn display_name(path: &Path) -> String {
 }
 
 /// Best-effort extraction of the first icon. The icon is written as PNG bytes
-/// into the app data directory so the webview can show it directly. Failures
-/// are silent — the row will simply fall back to the text glyph.
-fn extract_icon(path: &Path) -> Option<String> {
+/// into the supplied cache directory (which must be inside the Tauri asset
+/// protocol scope) so the webview can render the result with `convertFileSrc`.
+/// Failures are silent — the row will simply fall back to the text glyph.
+#[allow(dead_code)] // only used in the production clipboard path
+fn extract_icon(path: &Path, cache_root: &Path) -> Option<String> {
     let exe_str = path.as_os_str().to_str()?;
-    let wide = to_wide(exe_str);
-    unsafe {
-        let icon = ExtractIconW(None, pcwstr(&wide), 0);
-        if icon.0.is_null() {
-            return None;
-        }
-        // For v1 we leak the icon handle (process exit cleans it up). The
-        // webview row uses the app-name glyph when this returns `None`, so
-        // silent failure is acceptable.
-    }
-    None
+    super::apps::extract_icon_into(exe_str, cache_root)
 }

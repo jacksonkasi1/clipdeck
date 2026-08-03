@@ -8,12 +8,9 @@ import {
   CircleMinus,
   ClipboardCopy,
   Copy,
-  ExternalLink,
   File,
   FileImage,
   Folder,
-  FolderOpen,
-  Link2,
   LoaderCircle,
   Mail,
   PanelBottomClose,
@@ -27,37 +24,11 @@ import {
 } from 'lucide-react';
 
 import { IconButton } from './IconButton';
+import { LinkPreviewCard } from './LinkPreviewCard';
+import { SafeAssetImage } from './SafeImage';
 import { useStore } from '../lib/store';
-import { api, fileSrc } from '../lib/tauri';
+import { api } from '../lib/tauri';
 import { getShortcutLabel } from '../lib/platform';
-import { normaliseUrl, tryParseScheme } from '../lib/url';
-import { toast } from '../lib/toast';
-
-/** Loads an image and falls back to a thumbnail-friendly placeholder on error. */
-function SafeImage({
-  src,
-  alt,
-  className,
-  fallback,
-}: {
-  src: string;
-  alt: string;
-  className?: string;
-  fallback: React.ReactNode;
-}) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <>{fallback}</>;
-  return (
-    <img
-      src={src}
-      alt={alt}
-      className={className}
-      onError={() => setFailed(true)}
-      loading="lazy"
-      decoding="async"
-    />
-  );
-}
 
 export function PreviewPane() {
   const selectedId = useStore((s) => s.selectedId);
@@ -211,8 +182,8 @@ function ImagePreview({ item }: { item: ClipItem }) {
   return (
     <div className="preview-scroll preview-image-wrap">
       <div className="image-canvas">
-        <SafeImage
-          src={fileSrc(item.image.path)}
+        <SafeAssetImage
+          path={item.image.path}
           alt={item.preview}
           className="preview-image"
           fallback={
@@ -250,8 +221,8 @@ function FilePreview({ item }: { item: ClipItem }) {
           <span className="file-card-icon">
             {asset.thumbPath
               ? (
-                <SafeImage
-                  src={fileSrc(asset.thumbPath)}
+                <SafeAssetImage
+                  path={asset.thumbPath}
                   alt={baseName(asset.originalPath)}
                   className="file-card-thumbnail"
                   fallback={
@@ -273,12 +244,6 @@ function FilePreview({ item }: { item: ClipItem }) {
               {snapshotLabel(asset.status, asset.message)}
             </small>
           </div>
-          <IconButton
-            label="Show in File Explorer"
-            onClick={() => void api.revealItem(asset.storedPath ?? asset.originalPath)}
-          >
-            <FolderOpen size={17} aria-hidden />
-          </IconButton>
         </article>
       ))}
     </div>
@@ -287,34 +252,16 @@ function FilePreview({ item }: { item: ClipItem }) {
 
 function LinkPreview({ item, onEdit }: { item: ClipItem; onEdit: () => void }) {
   const url = item.content || item.preview;
-  const domain = safeDomain(url);
   return (
     <div className="preview-scroll link-preview">
-      <article className="link-card">
-        <div className="link-hero">
-          <span className="link-mark"><Link2 size={34} aria-hidden /></span>
-          <span>{domain}</span>
-        </div>
-        <button type="button" className="link-card-copy preview-edit-trigger" onClick={onEdit}>
-          <strong>{domain || 'Web link'}</strong>
-          <span>{url}</span>
-        </button>
-      </article>
+      <LinkPreviewCard item={item} />
       <button
         type="button"
-        className="secondary-button"
-        onClick={() => {
-          const scheme = tryParseScheme(url);
-          if (!scheme) {
-            toast('That link is not a URL Clipmo can open.', 'error');
-            return;
-          }
-          void api.openExternalUrl(normaliseUrl(url)).catch((error: unknown) => {
-            toast(`The default browser could not be opened: ${String(error)}`, 'error');
-          });
-        }}
+        className="link-card-copy preview-edit-trigger"
+        onClick={onEdit}
       >
-        <ExternalLink size={16} aria-hidden /> Open in browser
+        <strong>{safeDomain(url) || 'Web link'}</strong>
+        <span>{url}</span>
       </button>
     </div>
   );
