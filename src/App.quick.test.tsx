@@ -41,6 +41,7 @@ const apiMock = vi.hoisted(() => ({
   openSettingsWindow: vi.fn(),
   openStorageFolder: vi.fn(),
   openExternalUrl: vi.fn(),
+  revealItem: vi.fn(),
   listInstalledApps: vi.fn(),
   listRunningApps: vi.fn(),
   resolveApplicationIdentity: vi.fn(),
@@ -187,6 +188,7 @@ beforeEach(() => {
   apiMock.openSettingsWindow.mockReset().mockResolvedValue(undefined);
   apiMock.openStorageFolder.mockReset().mockResolvedValue(undefined);
   apiMock.openExternalUrl.mockReset().mockResolvedValue(undefined);
+  apiMock.revealItem.mockReset().mockResolvedValue(undefined);
   apiMock.listInstalledApps.mockReset().mockResolvedValue([]);
   apiMock.listRunningApps.mockReset().mockResolvedValue([]);
   apiMock.resolveApplicationIdentity.mockReset().mockResolvedValue(null);

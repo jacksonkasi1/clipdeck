@@ -7,8 +7,12 @@
 //! 2. `GetForegroundWindow` — used when nothing owns the clipboard yet (for
 //!    instance drag-and-drop copies that never opened it).
 //!
-//! Icon extraction is intentionally skipped in v1; the row uses the display
-//! name only, with a coloured fallback glyph derived from the process name.
+//! Icon extraction is **intentionally disabled** in this build. Per-clipboard
+//! PowerShell launches were observed to flash a terminal window on the user's
+//! desktop and to fail to write the cached icon for many sources, so the row
+//! surfaces the display name only and the frontend renders a generic window
+//! glyph. The settings app picker keeps the PowerShell-based extraction for
+//! the one-shot, user-triggered lookup.
 
 use std::path::{Path, PathBuf};
 
@@ -20,7 +24,6 @@ use windows::Win32::System::DataExchange::GetClipboardOwner;
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Shell::ExtractIconW;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetForegroundWindow, GetWindowThreadProcessId, GA_ROOTOWNER,
 };
@@ -256,20 +259,13 @@ fn display_name(path: &Path) -> String {
     stem
 }
 
-/// Best-effort extraction of the first icon. The icon is written as PNG bytes
-/// into the app data directory so the webview can show it directly. Failures
-/// are silent — the row will simply fall back to the text glyph.
-fn extract_icon(path: &Path) -> Option<String> {
-    let exe_str = path.as_os_str().to_str()?;
-    let wide = to_wide(exe_str);
-    unsafe {
-        let icon = ExtractIconW(None, pcwstr(&wide), 0);
-        if icon.0.is_null() {
-            return None;
-        }
-        // For v1 we leak the icon handle (process exit cleans it up). The
-        // webview row uses the app-name glyph when this returns `None`, so
-        // silent failure is acceptable.
-    }
+/// Best-effort extraction of the first icon. Always returns `None` — the
+/// per-clipboard PowerShell launch that used to back this helper caused a
+/// terminal window to flash on every copy, and the cached icon was not
+/// reliably produced for short-lived foreground processes. The frontend
+/// renders a generic window glyph for source attribution; the
+/// settings app picker retains a one-shot, user-triggered PowerShell
+/// path for explicit lookups.
+fn extract_icon(_path: &Path) -> Option<String> {
     None
 }

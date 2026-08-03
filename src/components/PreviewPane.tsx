@@ -2,8 +2,9 @@
 import type { ClipItem } from '../lib/types';
 
 // ** import lib
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  AppWindow,
   CheckCircle2,
   CircleMinus,
   ClipboardCopy,
@@ -16,6 +17,7 @@ import {
   Link2,
   LoaderCircle,
   Mail,
+  MoreVertical,
   PanelBottomClose,
   PanelBottomOpen,
   Pencil,
@@ -106,10 +108,14 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
   const deleteSelected = useStore((s) => s.deleteSelected);
   const selectedIds = useStore((s) => s.selectedIds);
   const editable = item && ['text', 'link', 'email', 'color'].includes(item.kind);
+  const contextAction = describeContextAction(item);
+  const sourceName = item?.source?.name ?? null;
 
   return (
     <div className="preview-toolbar" role="toolbar" aria-label="Item actions">
-      <div className="toolbar-group">
+      <SourceIndicator name={sourceName} />
+      <div className="toolbar-spacer" />
+      <div className="toolbar-group toolbar-group--primary">
         <IconButton
           label={`Copy to clipboard (${getShortcutLabel('copy')})`}
           disabled={!item}
@@ -129,9 +135,17 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
             <Pencil size={18} aria-hidden />
           </IconButton>
         )}
+        {contextAction && (
+          <IconButton
+            label={contextAction.label}
+            disabled={!item}
+            onClick={() => item && void contextAction.run()}
+          >
+            {contextAction.icon}
+          </IconButton>
+        )}
       </div>
-      <div className="toolbar-spacer" />
-      <div className="toolbar-group">
+      <div className="toolbar-group toolbar-group--secondary">
         <IconButton
           label={item?.favorite ? 'Remove from favorites' : 'Add to favorites'}
           active={item?.favorite ?? false}
@@ -140,33 +154,170 @@ function PreviewToolbar({ item, onEdit }: { item: ClipItem | null; onEdit: () =>
         >
           <Star size={19} fill={item?.favorite ? 'currentColor' : 'none'} aria-hidden />
         </IconButton>
-        <IconButton
-          label={showDetails ? 'Hide details' : 'Show details'}
-          active={item ? showDetails : false}
-          disabled={!item}
-          onClick={() => setShowDetails(!showDetails)}
-        >
-          {showDetails ? (
-            <PanelBottomClose size={19} aria-hidden />
-          ) : (
-            <PanelBottomOpen size={19} aria-hidden />
-          )}
-        </IconButton>
-        <IconButton
-          label={selectedIds.length > 1 ? `Delete ${selectedIds.length} items` : 'Delete item'}
-          tone="danger"
-          disabled={!item}
-          onClick={() => {
+        <OverflowMenu
+          item={item}
+          showDetails={showDetails}
+          setShowDetails={setShowDetails}
+          selectedCount={selectedIds.length}
+          onDelete={async () => {
+            if (!item) return;
             if (selectedIds.length > 1) {
-              void deleteSelected();
-            } else if (item) {
-              void deleteItem(item.id);
+              await deleteSelected();
+            } else {
+              await deleteItem(item.id);
             }
           }}
-        >
-          <Trash2 size={18} aria-hidden />
-        </IconButton>
+        />
       </div>
+    </div>
+  );
+}
+
+/** Small "From {AppName}" tag with a generic window glyph for the source attribution. */
+function SourceIndicator({ name }: { name: string | null }) {
+  if (!name) {
+    return (
+      <span className="source-indicator" aria-hidden>
+        <AppWindow size={14} />
+      </span>
+    );
+  }
+  return (
+    <span className="source-indicator" title={`Copied from ${name}`}>
+      <AppWindow size={14} aria-hidden />
+      <span className="source-indicator-name">From {name}</span>
+    </span>
+  );
+}
+
+interface ContextAction {
+  label: string;
+  icon: React.ReactNode;
+  run: () => Promise<void> | void;
+}
+
+function describeContextAction(item: ClipItem | null): ContextAction | null {
+  if (!item) return null;
+  if (item.kind === 'link' || item.kind === 'email') {
+    const raw = item.kind === 'email' ? `mailto:${item.content || item.preview}` : (item.content || item.preview);
+    return {
+      label: 'Open in browser',
+      icon: <ExternalLink size={18} aria-hidden />,
+      run: () => openExternalLink(raw),
+    };
+  }
+  if (item.kind === 'files') {
+    const target = item.fileAssets[0]?.storedPath
+      ?? item.fileAssets[0]?.originalPath
+      ?? item.files[0];
+    if (!target) return null;
+    return {
+      label: 'Reveal in File Explorer',
+      icon: <FolderOpen size={18} aria-hidden />,
+      run: () => api.revealItem(target),
+    };
+  }
+  if (item.kind === 'image' && item.image?.path) {
+    return {
+      label: 'Reveal in File Explorer',
+      icon: <FolderOpen size={18} aria-hidden />,
+      run: () => api.revealItem(item.image!.path),
+    };
+  }
+  return null;
+}
+
+async function openExternalLink(raw: string): Promise<void> {
+  const scheme = tryParseScheme(raw);
+  if (!scheme) {
+    toast('That link is not a URL Clipmo can open.', 'error');
+    return;
+  }
+  try {
+    await api.openExternalUrl(normaliseUrl(raw));
+  } catch (error: unknown) {
+    toast(`The default browser could not be opened: ${String(error)}`, 'error');
+  }
+}
+
+/** A small kebab menu that surfaces the less common per-item actions. */
+function OverflowMenu({
+  item,
+  showDetails,
+  setShowDetails,
+  selectedCount,
+  onDelete,
+}: {
+  item: ClipItem | null;
+  showDetails: boolean;
+  setShowDetails: (show: boolean) => void;
+  selectedCount: number;
+  onDelete: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDocumentClick = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocumentClick);
+    document.addEventListener('keydown', onEscape);
+    return () => {
+      document.removeEventListener('mousedown', onDocumentClick);
+      document.removeEventListener('keydown', onEscape);
+    };
+  }, [open]);
+  return (
+    <div className="toolbar-overflow" ref={containerRef}>
+      <IconButton
+        label="More actions"
+        active={open}
+        disabled={!item}
+        onClick={() => setOpen(!open)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <MoreVertical size={18} aria-hidden />
+      </IconButton>
+      {open && (
+        <div role="menu" className="toolbar-overflow-menu">
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={item ? showDetails : false}
+            className={`toolbar-overflow-item${item && showDetails ? ' is-active' : ''}`}
+            onClick={() => {
+              setShowDetails(!showDetails);
+              setOpen(false);
+            }}
+          >
+            {item && showDetails ? (
+              <PanelBottomClose size={15} aria-hidden />
+            ) : (
+              <PanelBottomOpen size={15} aria-hidden />
+            )}
+            <span>{item && showDetails ? 'Hide details' : 'Show details'}</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="toolbar-overflow-item is-danger"
+            onClick={async () => {
+              setOpen(false);
+              await onDelete();
+            }}
+          >
+            <Trash2 size={15} aria-hidden />
+            <span>{selectedCount > 1 ? `Delete ${selectedCount} items` : 'Delete item'}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

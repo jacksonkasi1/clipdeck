@@ -73,3 +73,18 @@ describe('list density', () => {
     expect(Math.floor(after / ROW_HEIGHT.quick)).toBeGreaterThan(Math.floor(before / 46) + 5);
   });
 });
+
+describe('row trailing strip', () => {
+  it('reserves a fixed footprint so the favorite star cannot reflow the title', () => {
+    // The favorite button is `opacity: 0` until hover, but the trailing
+    // cluster must still occupy the same width on every row — otherwise
+    // the title's right edge would dance as the star faded in and the
+    // grid would visibly shift between rows. Width + flex-basis + min-width
+    // together pin the strip.
+    const trailing = rule(app, '.row-trailing');
+    expect(trailing).toContain('width: 44px');
+    expect(trailing).toContain('min-width: 44px');
+    expect(trailing).toContain('flex: 0 0 44px');
+    expect(trailing).toContain('justify-content: flex-end');
+  });
+});
