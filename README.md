@@ -1,5 +1,9 @@
 # Clipmo
 
+<p align="left">
+  <img src="assets/logo-256.png" alt="Clipmo logo" width="200" height="200" />
+</p>
+
 **Fast, private clipboard history for Windows.** Clipmo uses a Fluent surface
 that feels at home on Windows 11, with a compact quick window and a full history
 window for previewing and editing clipboard items.
