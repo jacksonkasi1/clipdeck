@@ -85,12 +85,12 @@ pub fn start_listener(sink: Arc<dyn CaptureSink>) -> std::io::Result<()> {
             }
         })?;
 
-    match ready_rx.recv_timeout(Duration::from_secs(3)) {
+    match ready_rx.recv_timeout(Duration::from_secs(15)) {
         Ok(Ok(())) => Ok(()),
         Ok(Err(message)) => Err(std::io::Error::other(message)),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
             std::io::ErrorKind::TimedOut,
-            "clipboard listener did not become ready within 3 seconds",
+            "clipboard listener did not become ready within 15 seconds",
         )),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(std::io::Error::other(
             "clipboard listener exited before reporting readiness",

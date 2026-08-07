@@ -261,7 +261,7 @@ fn bootstrap(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(error) = commands::enforce_history_policy_on_startup(app) {
         log::error!("startup history cleanup failed: {error}");
     }
-    commands::install_clipboard_listener(app)?;
+    if let Err(error) = commands::install_clipboard_listener(app) { log::warn!("clipboard listener unavailable: {error}"); }
 
     Ok(())
 }
